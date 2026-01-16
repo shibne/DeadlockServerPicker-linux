@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deadlock-server-picker"
-version = "1.0.0"
+version = "1.1.0"
 description = "A native Linux tool to block/unblock Deadlock game server relays using iptables"
 readme = "README.md"
 license = "GPL-3.0-only"

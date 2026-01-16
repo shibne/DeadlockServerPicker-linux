@@ -1,6 +1,6 @@
 # Maintainer: Your Name <your.email@example.com>
 pkgname=deadlock-server-picker
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="A native Linux tool to block/unblock Deadlock game server relays using iptables"
 arch=('any')

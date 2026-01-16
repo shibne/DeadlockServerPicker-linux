@@ -1,10 +1,11 @@
 """
 nftables firewall backend for Deadlock Server Picker.
-Modern alternative to iptables.
+Modern alternative to iptables with optimized batch operations.
 """
 
 import subprocess
 import shutil
+import tempfile
 from typing import Optional
 
 from .models import Server, ServerStatus
@@ -32,6 +33,7 @@ class NftablesManager:
         self.dry_run = dry_run
         self.use_sudo = use_sudo
         self._nft_path = self._find_nft()
+        self._blocked_cache: Optional[set[str]] = None
     
     def _find_nft(self) -> str:
         """Find the nft binary path."""
@@ -58,7 +60,6 @@ class NftablesManager:
             CompletedProcess with output.
         """
         if self.dry_run:
-            # Return empty success for dry run
             return subprocess.CompletedProcess(cmd, 0, "", "")
         
         if self.use_sudo:
@@ -83,25 +84,86 @@ class NftablesManager:
         except FileNotFoundError as e:
             raise NftablesError(f"Command not found: {e}") from e
     
+    def _run_batch(self, script: str) -> subprocess.CompletedProcess:
+        """
+        Run a batch nftables script atomically.
+        
+        Args:
+            script: nft script content.
+            
+        Returns:
+            CompletedProcess with output.
+        """
+        if self.dry_run:
+            return subprocess.CompletedProcess([], 0, "", "")
+        
+        # Write script to temp file and execute with -f
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.nft', delete=False) as f:
+            f.write(script)
+            script_path = f.name
+        
+        try:
+            cmd = [self._nft_path, "-f", script_path]
+            if self.use_sudo:
+                cmd = ["sudo"] + cmd
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            return result
+        finally:
+            import os
+            os.unlink(script_path)
+    
     def _get_rule_comment(self, server_name: str) -> str:
         """Get a comment identifier for a server rule."""
         sanitized = server_name.replace(" ", "_").replace("(", "").replace(")", "")
         return f"dsp_{sanitized}"
     
+    def _invalidate_cache(self):
+        """Invalidate the blocked servers cache."""
+        self._blocked_cache = None
+    
+    def _get_blocked_set(self) -> set[str]:
+        """Get set of blocked server comments (cached)."""
+        if self._blocked_cache is not None:
+            return self._blocked_cache
+        
+        result = self._run_command([
+            self._nft_path, "list", "table", "inet", self.TABLE_NAME
+        ], check=False)
+        
+        if result.returncode != 0:
+            self._blocked_cache = set()
+            return self._blocked_cache
+        
+        blocked = set()
+        for line in result.stdout.splitlines():
+            if 'comment "dsp_' in line:
+                start = line.find('comment "dsp_') + 9
+                end = line.find('"', start + 1)
+                if start > 9 and end > start:
+                    comment = line[start:end]
+                    blocked.add(comment)
+        
+        self._blocked_cache = blocked
+        return self._blocked_cache
+    
     def ensure_table_exists(self) -> None:
         """Ensure the nftables table and chains exist."""
-        # Create table if not exists
+        # Use add which is idempotent (won't fail if exists)
         self._run_command([
             self._nft_path, "add", "table", "inet", self.TABLE_NAME
         ], check=False)
         
-        # Create chain for OUTPUT (native apps)
         self._run_command([
             self._nft_path, "add", "chain", "inet", self.TABLE_NAME, self.CHAIN_NAME,
             "{ type filter hook output priority 0; policy accept; }"
         ], check=False)
         
-        # Create chain for FORWARD (Wine/Proton)
         self._run_command([
             self._nft_path, "add", "chain", "inet", self.TABLE_NAME, "forward_block",
             "{ type filter hook forward priority 0; policy accept; }"
@@ -110,15 +172,7 @@ class NftablesManager:
     def is_server_blocked(self, server: Server) -> bool:
         """Check if a server is currently blocked."""
         comment = self._get_rule_comment(server.display_name)
-        
-        result = self._run_command([
-            self._nft_path, "list", "table", "inet", self.TABLE_NAME
-        ], check=False)
-        
-        if result.returncode != 0:
-            return False
-        
-        return comment in result.stdout
+        return comment in self._get_blocked_set()
     
     def block_server(self, server: Server) -> bool:
         """
@@ -127,26 +181,29 @@ class NftablesManager:
         Returns:
             True if server was blocked, False if already blocked.
         """
-        if self.is_server_blocked(server):
+        comment = self._get_rule_comment(server.display_name)
+        
+        if comment in self._get_blocked_set():
             return False
         
         self.ensure_table_exists()
         
-        comment = self._get_rule_comment(server.display_name)
-        
-        # Add rule to block OUTPUT traffic
+        # Build batch script for atomic operation
+        lines = []
         for ip in server.ip_addresses:
-            self._run_command([
-                self._nft_path, "add", "rule", "inet", self.TABLE_NAME, self.CHAIN_NAME,
-                "ip", "daddr", ip, "drop", "comment", f'"{comment}"'
-            ])
-            
-            # Also add to forward chain for Wine/Proton
-            self._run_command([
-                self._nft_path, "add", "rule", "inet", self.TABLE_NAME, "forward_block",
-                "ip", "daddr", ip, "drop", "comment", f'"{comment}"'
-            ])
+            lines.append(
+                f'add rule inet {self.TABLE_NAME} {self.CHAIN_NAME} '
+                f'ip daddr {ip} drop comment "{comment}"'
+            )
+            lines.append(
+                f'add rule inet {self.TABLE_NAME} forward_block '
+                f'ip daddr {ip} drop comment "{comment}"'
+            )
         
+        script = "\n".join(lines)
+        self._run_batch(script)
+        
+        self._invalidate_cache()
         server.status = ServerStatus.BLOCKED
         return True
     
@@ -157,11 +214,11 @@ class NftablesManager:
         Returns:
             True if server was unblocked, False if not blocked.
         """
-        if not self.is_server_blocked(server):
+        comment = self._get_rule_comment(server.display_name)
+        
+        if comment not in self._get_blocked_set():
             server.status = ServerStatus.AVAILABLE
             return False
-        
-        comment = self._get_rule_comment(server.display_name)
         
         # Get rule handles to delete
         result = self._run_command([
@@ -169,89 +226,165 @@ class NftablesManager:
         ], check=False)
         
         if result.returncode == 0:
-            # Find and delete rules with our comment
+            # Find handles to delete
             handles_to_delete = []
             current_chain = None
             
             for line in result.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("chain "):
-                    current_chain = line.split()[1]
+                line_stripped = line.strip()
+                if line_stripped.startswith("chain "):
+                    current_chain = line_stripped.split()[1]
                 elif comment in line and "handle" in line:
-                    # Extract handle number
                     parts = line.split("handle")
                     if len(parts) > 1:
                         handle = parts[1].strip().split()[0]
                         handles_to_delete.append((current_chain, handle))
             
-            # Delete rules
-            for chain, handle in handles_to_delete:
-                self._run_command([
-                    self._nft_path, "delete", "rule", "inet", self.TABLE_NAME,
-                    chain, "handle", handle
-                ], check=False)
+            # Batch delete rules
+            if handles_to_delete:
+                lines = []
+                for chain, handle in handles_to_delete:
+                    lines.append(
+                        f'delete rule inet {self.TABLE_NAME} {chain} handle {handle}'
+                    )
+                script = "\n".join(lines)
+                self._run_batch(script)
         
+        self._invalidate_cache()
         server.status = ServerStatus.AVAILABLE
         return True
     
     def block_servers(self, servers: list[Server]) -> tuple[int, int]:
-        """Block multiple servers. Returns (blocked_count, already_blocked_count)."""
-        blocked = 0
+        """Block multiple servers in a single batch operation."""
+        # Get currently blocked set once
+        blocked_set = self._get_blocked_set()
+        
+        to_block = []
         already_blocked = 0
         
         for server in servers:
-            if self.block_server(server):
-                blocked += 1
-            else:
+            comment = self._get_rule_comment(server.display_name)
+            if comment in blocked_set:
                 already_blocked += 1
+            else:
+                to_block.append(server)
         
-        return blocked, already_blocked
+        if not to_block:
+            return 0, already_blocked
+        
+        self.ensure_table_exists()
+        
+        # Build batch script for all servers
+        lines = []
+        for server in to_block:
+            comment = self._get_rule_comment(server.display_name)
+            for ip in server.ip_addresses:
+                lines.append(
+                    f'add rule inet {self.TABLE_NAME} {self.CHAIN_NAME} '
+                    f'ip daddr {ip} drop comment "{comment}"'
+                )
+                lines.append(
+                    f'add rule inet {self.TABLE_NAME} forward_block '
+                    f'ip daddr {ip} drop comment "{comment}"'
+                )
+        
+        script = "\n".join(lines)
+        self._run_batch(script)
+        
+        # Update server status
+        for server in to_block:
+            server.status = ServerStatus.BLOCKED
+        
+        self._invalidate_cache()
+        return len(to_block), already_blocked
     
     def unblock_servers(self, servers: list[Server]) -> tuple[int, int]:
-        """Unblock multiple servers. Returns (unblocked_count, not_blocked_count)."""
-        unblocked = 0
+        """Unblock multiple servers in a single batch operation."""
+        # Get currently blocked set once
+        blocked_set = self._get_blocked_set()
+        
+        to_unblock = []
         not_blocked = 0
         
         for server in servers:
-            if self.unblock_server(server):
-                unblocked += 1
-            else:
+            comment = self._get_rule_comment(server.display_name)
+            if comment not in blocked_set:
+                server.status = ServerStatus.AVAILABLE
                 not_blocked += 1
+            else:
+                to_unblock.append((server, comment))
         
-        return unblocked, not_blocked
-    
-    def get_blocked_servers(self) -> list[str]:
-        """Get list of currently blocked server names."""
+        if not to_unblock:
+            return 0, not_blocked
+        
+        # Get all handles at once
         result = self._run_command([
-            self._nft_path, "list", "table", "inet", self.TABLE_NAME
+            self._nft_path, "-a", "list", "table", "inet", self.TABLE_NAME
         ], check=False)
         
         if result.returncode != 0:
-            return []
+            return 0, not_blocked + len(to_unblock)
         
-        blocked = set()
+        # Build set of comments to delete
+        comments_to_delete = {comment for _, comment in to_unblock}
+        
+        # Find all handles to delete
+        handles_to_delete = []
+        current_chain = None
+        
         for line in result.stdout.splitlines():
-            if 'comment "dsp_' in line:
-                # Extract server name from comment
-                start = line.find('comment "dsp_') + 13
-                end = line.find('"', start)
-                if start > 13 and end > start:
-                    server_name = line[start:end].replace("_", " ")
-                    blocked.add(server_name)
+            line_stripped = line.strip()
+            if line_stripped.startswith("chain "):
+                current_chain = line_stripped.split()[1]
+            elif "handle" in line:
+                for comment in comments_to_delete:
+                    if comment in line:
+                        parts = line.split("handle")
+                        if len(parts) > 1:
+                            handle = parts[1].strip().split()[0]
+                            handles_to_delete.append((current_chain, handle))
+                        break
         
-        return list(blocked)
+        # Batch delete all rules
+        if handles_to_delete:
+            lines = []
+            for chain, handle in handles_to_delete:
+                lines.append(
+                    f'delete rule inet {self.TABLE_NAME} {chain} handle {handle}'
+                )
+            script = "\n".join(lines)
+            self._run_batch(script)
+        
+        # Update server status
+        for server, _ in to_unblock:
+            server.status = ServerStatus.AVAILABLE
+        
+        self._invalidate_cache()
+        return len(to_unblock), not_blocked
+    
+    def get_blocked_servers(self) -> list[str]:
+        """Get list of currently blocked server names."""
+        blocked_set = self._get_blocked_set()
+        
+        # Convert comments back to names
+        blocked_names = []
+        for comment in blocked_set:
+            # Remove dsp_ prefix and convert underscores back
+            if comment.startswith("dsp_"):
+                name = comment[4:].replace("_", " ")
+                blocked_names.append(name)
+        
+        return blocked_names
     
     def clear_all_rules(self) -> int:
         """Remove all rules from our table. Returns rule count removed."""
-        # Flush the chains
-        self._run_command([
-            self._nft_path, "flush", "chain", "inet", self.TABLE_NAME, self.CHAIN_NAME
-        ], check=False)
-        
-        self._run_command([
-            self._nft_path, "flush", "chain", "inet", self.TABLE_NAME, "forward_block"
-        ], check=False)
-        
+        # Flush both chains at once
+        script = f"""
+flush chain inet {self.TABLE_NAME} {self.CHAIN_NAME}
+flush chain inet {self.TABLE_NAME} forward_block
+"""
+        self._run_batch(script)
+        self._invalidate_cache()
         return 1
     
     def reset_firewall(self) -> None:
@@ -259,6 +392,7 @@ class NftablesManager:
         self._run_command([
             self._nft_path, "delete", "table", "inet", self.TABLE_NAME
         ], check=False)
+        self._invalidate_cache()
     
     def check_permissions(self) -> tuple[bool, str]:
         """Check if we have permissions to manage nftables."""

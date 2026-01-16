@@ -355,7 +355,7 @@ class ServerPickerTUI:
         self._add_output("─── Available Commands ───", "green")
         
         help_lines = [
-            ("list [region]", "Show servers (optionally filter by region)"),
+            ("list [region|server]", "Show servers by location (filter by region/server)"),
             ("regions", "Show available region presets"),
             ("block <code>", "Block a server by code"),
             ("unblock <code>", "Unblock a server by code"),
@@ -365,7 +365,6 @@ class ServerPickerTUI:
             ("ping [region]", "Ping servers and show latency"),
             ("history [server]", "Show latency history"),
             ("best", "Show servers with best latency"),
-            ("geo [server]", "Show server geographic locations"),
             ("wine", "Show Wine/Proton status"),
             ("status", "Show current status"),
             ("reset", "Unblock all servers"),
@@ -737,48 +736,98 @@ class ServerPickerTUI:
         
         return True
     
-    def show_geo(self, server_code: Optional[str] = None) -> bool:
+    def show_geo(self, filter_arg: Optional[str] = None) -> bool:
         """Show server geographic locations. Returns True."""
         self._clear_output()
         
-        if server_code:
-            # Show specific server location
-            loc = get_server_location(server_code)
-            if not loc:
-                self._add_output(f"No location data for server: {server_code}", "yellow")
+        # Check if filter_arg is a specific server code
+        if filter_arg:
+            # First check if it's a server code
+            loc = get_server_location(filter_arg)
+            if loc:
+                # Show specific server location details
+                blocked = self.server_status.get(filter_arg, False)
+                status = "BLOCKED" if blocked else "ALLOWED"
+                status_style = "red" if blocked else "green"
+                ping = self.ping_results.get(filter_arg)
+                
+                self._add_output(f"─── Server: {filter_arg.upper()} ───", "cyan")
+                self._add_output(f"  City:      {loc.city}", "white")
+                self._add_output(f"  Country:   {loc.country}", "white")
+                self._add_output(f"  Region:    {loc.region}", "white")
+                self._add_output(f"  Coords:    {loc.latitude:.4f}, {loc.longitude:.4f}", "dim")
+                self._add_output(f"  Status:    {status}", status_style)
+                if ping is not None and isinstance(ping, (int, float)):
+                    self._add_output(f"  Latency:   {ping:.0f}ms", "white")
+                return True
+            
+            # Otherwise treat as region filter
+            region_servers = get_region_servers(filter_arg)
+            if not region_servers:
+                self._add_output(f"Unknown server or region: {filter_arg}", "red")
+                self._add_output("Use 'regions' to see available regions", "dim")
                 return False
-            
-            blocked = self.server_status.get(server_code, False)
-            status = "BLOCKED" if blocked else "ALLOWED"
-            status_style = "red" if blocked else "green"
-            
-            self._add_output(f"─── Server Location: {server_code.upper()} ───", "cyan")
-            self._add_output(f"  City:      {loc.city}", "white")
-            self._add_output(f"  Country:   {loc.country}", "white")
-            self._add_output(f"  Region:    {loc.region}", "white")
-            self._add_output(f"  Coords:    {loc.latitude:.4f}, {loc.longitude:.4f}", "dim")
-            self._add_output(f"  Status:    {status}", status_style)
+            filtered = [s for s in self.servers if s.code in region_servers]
+            title = f"Servers in {filter_arg.upper()}"
         else:
-            # Show all servers by region
-            self._add_output("─── Server Locations ───", "cyan")
-            
-            # Group by region
-            regions: dict[str, list[tuple[str, str, bool]]] = {}
-            for server in self.servers:
-                loc = get_server_location(server.code)
-                if loc:
-                    region = loc.region
-                    if region not in regions:
-                        regions[region] = []
-                    blocked = self.server_status.get(server.code, False)
-                    regions[region].append((server.code, loc.city, blocked))
-            
-            for region in sorted(regions.keys()):
-                self._add_output(f"\n{region}:", "yellow")
-                for code, city, blocked in sorted(regions[region], key=lambda x: x[1]):
-                    icon = "●" if blocked else "○"
-                    self._add_output(f"  {icon} {code:6} {city}", "white")
+            filtered = self.servers
+            title = "All Servers"
         
+        if not filtered:
+            self._add_output("No servers found", "yellow")
+            return False
+        
+        self._add_output(f"─── {title} ({len(filtered)}) ───", "cyan")
+        
+        # Group servers by geographic region
+        regions: dict[str, list[tuple[str, str, bool, Optional[float]]]] = {}
+        for server in filtered:
+            loc = get_server_location(server.code)
+            if loc:
+                region = loc.region
+                if region not in regions:
+                    regions[region] = []
+                blocked = self.server_status.get(server.code, False)
+                ping = self.ping_results.get(server.code)
+                regions[region].append((server.code, loc.city, blocked, ping))
+            else:
+                # Unknown location
+                if "Unknown" not in regions:
+                    regions["Unknown"] = []
+                blocked = self.server_status.get(server.code, False)
+                ping = self.ping_results.get(server.code)
+                regions["Unknown"].append((server.code, "?", blocked, ping))
+        
+        # Display each region in compact multi-column format
+        for region in sorted(regions.keys()):
+            self._add_output(f"{region}:", "yellow")
+            
+            # Build entries for this region
+            entries = []
+            for code, city, blocked, ping in sorted(regions[region], key=lambda x: x[1]):
+                icon = "●" if blocked else "○"
+                if ping is not None and isinstance(ping, (int, float)):
+                    entry = f"{icon} {code:6} {city[:12]:12} {ping:>4.0f}ms"
+                else:
+                    entry = f"{icon} {code:6} {city[:12]:12}      "
+                entries.append(entry)
+            
+            # Display in 3 columns
+            cols = 3
+            col_width = 28
+            rows = (len(entries) + cols - 1) // cols
+            
+            for row in range(rows):
+                line_parts = []
+                for col in range(cols):
+                    idx = row + col * rows
+                    if idx < len(entries):
+                        line_parts.append(entries[idx])
+                
+                line = "  ".join(f"{p:<{col_width}}" for p in line_parts)
+                self._add_output(f"  {line}", "white")
+        
+        self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
     
     def reset_all(self) -> bool:
@@ -840,8 +889,8 @@ class ServerPickerTUI:
             return False, True
         
         elif cmd in ("list", "l", "ls"):
-            region = args[0] if args else None
-            success = self.show_servers(region)
+            filter_arg = args[0] if args else None
+            success = self.show_geo(filter_arg)
             return True, success
         
         elif cmd in ("regions", "r"):
@@ -901,10 +950,7 @@ class ServerPickerTUI:
             success = self.show_wine_status()
             return True, success
         
-        elif cmd == "geo":
-            server = args[0] if args else None
-            success = self.show_geo(server)
-            return True, success
+
         
         elif cmd == "reset":
             success = self.reset_all()
