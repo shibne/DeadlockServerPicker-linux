@@ -1,4 +1,4 @@
-# Maintainer: Your Name <your.email@example.com>
+# Maintainer: cihan shibne123@gmail.com
 pkgname=deadlock-server-picker
 pkgver=1.2.0
 pkgrel=1
