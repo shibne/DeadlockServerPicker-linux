@@ -1,21 +1,26 @@
 # Deadlock Server Picker for Linux
 
-A native Linux command-line tool to block/unblock Deadlock game server relays using iptables.
+A native Linux command-line tool to block/unblock Deadlock game server relays using iptables or nftables.
 
 ## Features
 
 - Block/unblock specific server regions
 - Built-in region presets (NA, EU, Asia, etc.)
 - Interactive TUI with color-coded status
-- Ping monitoring with latency display
+- Ping monitoring with latency display and history tracking
 - Custom preset system
 - Dry-run mode for testing
+- **nftables support** (auto-detects iptables vs nftables)
+- **Wine/Proton detection** for game process monitoring
+- **Server geolocation data** with geographic info
+- **Systemd service** for auto-start at boot
+- **Auto-apply preferences** on startup (always_block, never_block, last region)
 
 ## Requirements
 
 - Linux
 - Python 3.10+
-- iptables
+- iptables or nftables
 - Root/sudo access
 
 ## Installation
@@ -75,7 +80,33 @@ deadlock-server-picker unblock-region eu
 deadlock-server-picker tui
 ```
 
-Commands: `list`, `regions`, `block <code>`, `unblock <code>`, `allow <region>`, `ping`, `reset`, `quit`
+Commands: `list`, `regions`, `block <code>`, `unblock <code>`, `allow <region>`, `ping`, `history`, `best`, `geo`, `wine`, `reset`, `quit`
+
+### Configuration
+
+```bash
+# Show configuration
+deadlock-server-picker config show
+
+# Set default region (auto-applied on startup)
+deadlock-server-picker config set default_region eu
+
+# Set servers to always block
+deadlock-server-picker config set always_block "sgp,hkg"
+
+# Choose firewall backend
+deadlock-server-picker config set firewall_backend nftables
+```
+
+### Systemd Service (Auto-start)
+
+```bash
+# Enable system service
+sudo systemctl enable --now deadlock-server-picker
+
+# Or enable user service
+systemctl --user enable --now deadlock-server-picker
+```
 
 ### Options
 
