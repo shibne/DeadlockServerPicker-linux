@@ -137,6 +137,10 @@ Steam Datagram Relay may find alternative routes. For best results, only block s
 
 iptables requires elevated privileges to add or remove firewall rules.
 
+### Does this work with CS2?
+
+Yes. CS2 and Deadlock servers share the same relay addresses.
+
 ## License
 
 GPL-3.0
