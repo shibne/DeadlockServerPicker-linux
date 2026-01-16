@@ -105,13 +105,6 @@ Steam Datagram Relay may find alternative routes. For best results, only block s
 
 iptables requires elevated privileges to add or remove firewall rules.
 
-## Development
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
 ## License
 
 GPL-3.0
