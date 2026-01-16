@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deadlock-server-picker"
+version = "1.0.0"
+description = "A native Linux tool to block/unblock CS2 game server relays using iptables"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+authors = [
+    {name = "Deadlock Server Picker"}
+]
+keywords = [
+    "deadlock", "valve", "server", "picker", "firewall", "iptables", "linux", "gaming"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment :: First Person Shooters",
+    "Topic :: System :: Networking :: Firewalls",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+deadlock-server-picker = "deadlock_server_picker.cli:main"
+deadlock-server-picker-tui = "deadlock_server_picker.tui:main"
+
+[project.urls]
+Homepage = "https://github.com/your-username/deadlock-server-picker"
+Repository = "https://github.com/your-username/deadlock-server-picker"
+Issues = "https://github.com/your-username/deadlock-server-picker/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["deadlock_server_picker*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "asyncio: marks tests as async tests",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["deadlock_server_picker"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
