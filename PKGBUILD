@@ -1,34 +1,27 @@
 # Maintainer: Your Name <your.email@example.com>
-pkgname=deadlock-server-picker-git
-pkgver=r6.c23d675
+pkgname=deadlock-server-picker
+pkgver=1.0.0
 pkgrel=1
-pkgdesc="A native Linux tool to block/unblock Deadlock game server relays using iptables (git version)"
+pkgdesc="A native Linux tool to block/unblock Deadlock game server relays using iptables"
 arch=('any')
 url="https://github.com/shibne/DeadlockServerPicker-linux"
 license=('GPL-3.0-only')
 depends=('python' 'python-rich' 'iptables')
-makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'git')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
 optdepends=(
     'bash-completion: for bash shell completions'
     'fish: for fish shell completions'
 )
-provides=('deadlock-server-picker')
-conflicts=('deadlock-server-picker')
-source=("git+${url}.git")
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
-pkgver() {
-    cd "${srcdir}/DeadlockServerPicker-linux"
-    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
-
 build() {
-    cd "${srcdir}/DeadlockServerPicker-linux"
+    cd "${srcdir}/DeadlockServerPicker-linux-${pkgver}"
     python -m build --wheel --no-isolation
 }
 
 package() {
-    cd "${srcdir}/DeadlockServerPicker-linux"
+    cd "${srcdir}/DeadlockServerPicker-linux-${pkgver}"
     
     # Install the Python package
     python -m installer --destdir="${pkgdir}" dist/*.whl
