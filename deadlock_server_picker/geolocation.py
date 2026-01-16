@@ -75,6 +75,29 @@ SERVER_LOCATIONS: dict[str, GeoLocation] = {
     # Russia & CIS
     "mos": GeoLocation("Moscow", "Russia", "Russia", 55.7558, 37.6173),
     "mos2": GeoLocation("Moscow", "Russia", "Russia", 55.7558, 37.6173),
+    
+    # Additional servers
+    "seo": GeoLocation("Seoul", "South Korea", "Asia", 37.5665, 126.9780),
+    "shb": GeoLocation("Shanghai", "China", "Asia", 31.2304, 121.4737),
+    "bom2": GeoLocation("Mumbai", "India", "Asia", 19.0760, 72.8777),
+    "maa2": GeoLocation("Chennai", "India", "Asia", 13.0827, 80.2707),
+    "sto2": GeoLocation("Stockholm", "Sweden", "Europe", 59.3293, 18.0686),
+    "ams4": GeoLocation("Amsterdam", "Netherlands", "Europe", 52.3676, 4.9041),
+    "hkg4": GeoLocation("Hong Kong", "China", "Asia", 22.3193, 114.1694),
+    
+    # China Perfect World servers (Mobile/Telecom/Unicom)
+    "ctum": GeoLocation("Chengdu", "China", "China", 30.5728, 104.0668),  # China Telecom
+    "pekm": GeoLocation("Beijing", "China", "China", 39.9042, 116.4074),
+    "pvgm": GeoLocation("Shanghai", "China", "China", 31.2304, 121.4737),
+    "tgdm": GeoLocation("Dongguan", "China", "China", 23.0489, 113.7447),
+    "ctut": GeoLocation("Chengdu", "China", "China", 30.5728, 104.0668),  # China Telecom
+    "pekt": GeoLocation("Beijing", "China", "China", 39.9042, 116.4074),
+    "pvgt": GeoLocation("Shanghai", "China", "China", 31.2304, 121.4737),
+    "tgdt": GeoLocation("Dongguan", "China", "China", 23.0489, 113.7447),
+    "ctuu": GeoLocation("Chengdu", "China", "China", 30.5728, 104.0668),  # China Unicom
+    "peku": GeoLocation("Beijing", "China", "China", 39.9042, 116.4074),
+    "pvgu": GeoLocation("Shanghai", "China", "China", 31.2304, 121.4737),
+    "tgdu": GeoLocation("Dongguan", "China", "China", 23.0489, 113.7447),
 }
 
 

@@ -56,7 +56,7 @@ class ServerPickerTUI:
         self.server_status: dict[str, bool] = {}  # code -> blocked
         self.ping_results: dict[str, Optional[float]] = {}  # code -> latency
         self.output_lines: list[Text] = []  # Dynamic output buffer
-        self.max_output_lines = 20  # Max lines to keep in output buffer
+        self.max_output_lines = 50  # Max lines to keep in output buffer
     
     def _check_sudo_access(self) -> bool:
         """
@@ -791,12 +791,14 @@ class ServerPickerTUI:
                 ping = self.ping_results.get(server.code)
                 regions[region].append((server.code, loc.city, blocked, ping))
             else:
-                # Unknown location
+                # Unknown location - use server name as identifier
                 if "Unknown" not in regions:
                     regions["Unknown"] = []
                 blocked = self.server_status.get(server.code, False)
                 ping = self.ping_results.get(server.code)
-                regions["Unknown"].append((server.code, "?", blocked, ping))
+                # Use server name or code as city placeholder
+                display = server.name[:12] if server.name else server.code
+                regions["Unknown"].append((server.code, display, blocked, ping))
         
         # Display each region in compact multi-column format
         for region in sorted(regions.keys()):
