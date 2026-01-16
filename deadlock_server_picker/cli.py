@@ -663,6 +663,86 @@ class DeadlockServerPickerCLI:
             print(colorize(f"Error: {e}", Colors.RED))
             return 1
 
+    def cmd_config_show(self) -> int:
+        """Show current configuration."""
+        from .config import ConfigManager
+        
+        config_mgr = ConfigManager(self.preset_manager.config_dir)
+        config = config_mgr.load()
+        
+        print(colorize("Current Configuration:", Colors.BOLD))
+        print("-" * 40)
+        print(f"  default_region:     {config.default_region or '(not set)'}")
+        print(f"  auto_reset_on_exit: {config.auto_reset_on_exit}")
+        print(f"  ping_timeout:       {config.ping_timeout}s")
+        print(f"  clustered:          {config.clustered}")
+        print(f"  use_sudo:           {config.use_sudo}")
+        print(f"  favorites:          {', '.join(config.favorites) or '(none)'}")
+        print(f"  always_block:       {', '.join(config.always_block) or '(none)'}")
+        print(f"  never_block:        {', '.join(config.never_block) or '(none)'}")
+        print(f"\nConfig file: {config_mgr.config_path}")
+        return 0
+
+    def cmd_config_set(self, key: str, value: str) -> int:
+        """Set a configuration value."""
+        from .config import ConfigManager, Config
+        
+        config_mgr = ConfigManager(self.preset_manager.config_dir)
+        config = config_mgr.load()
+        
+        if not hasattr(config, key):
+            print(colorize(f"Unknown config key: {key}", Colors.RED))
+            print(colorize("Valid keys: default_region, auto_reset_on_exit, ping_timeout, clustered, use_sudo", Colors.DIM))
+            return 1
+        
+        # Convert value to appropriate type
+        current = getattr(config, key)
+        try:
+            if isinstance(current, bool):
+                value = value.lower() in ('true', '1', 'yes', 'on')
+            elif isinstance(current, float):
+                value = float(value)
+            elif isinstance(current, int):
+                value = int(value)
+            elif isinstance(current, list):
+                value = [v.strip() for v in value.split(',') if v.strip()]
+            
+            setattr(config, key, value)
+            config_mgr.save(config)
+            print(colorize(f"Set {key} = {value}", Colors.GREEN))
+            return 0
+        except (ValueError, TypeError) as e:
+            print(colorize(f"Invalid value for {key}: {e}", Colors.RED))
+            return 1
+
+    def cmd_config_reset(self) -> int:
+        """Reset configuration to defaults."""
+        from .config import ConfigManager
+        
+        config_mgr = ConfigManager(self.preset_manager.config_dir)
+        config_mgr.reset()
+        print(colorize("Configuration reset to defaults", Colors.GREEN))
+        return 0
+
+    def cmd_config_path(self) -> int:
+        """Show configuration file path."""
+        from .config import ConfigManager
+        
+        config_mgr = ConfigManager(self.preset_manager.config_dir)
+        print(config_mgr.config_path)
+        return 0
+
+    def cmd_save_rules(self) -> int:
+        """Show command to persist firewall rules."""
+        save_cmd = self.firewall.get_save_command()
+        print(colorize("To persist firewall rules across reboots:", Colors.BOLD))
+        print()
+        print(f"  {save_cmd}")
+        print()
+        print(colorize("Note: You may need to install iptables-persistent (Debian/Ubuntu)", Colors.DIM))
+        print(colorize("      or enable iptables.service (Arch/systemd)", Colors.DIM))
+        return 0
+
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
@@ -770,6 +850,19 @@ Examples:
     # TUI command
     subparsers.add_parser("tui", help="Launch interactive TUI interface")
 
+    # Config command
+    config_parser = subparsers.add_parser("config", help="Manage configuration")
+    config_sub = config_parser.add_subparsers(dest="config_command")
+    config_sub.add_parser("show", help="Show current configuration")
+    config_set = config_sub.add_parser("set", help="Set a configuration value")
+    config_set.add_argument("key", help="Configuration key")
+    config_set.add_argument("value", help="Value to set")
+    config_sub.add_parser("reset", help="Reset configuration to defaults")
+    config_sub.add_parser("path", help="Show configuration file path")
+    
+    # Save rules command
+    subparsers.add_parser("save-rules", help="Show command to persist firewall rules")
+
     return parser
 
 
@@ -840,6 +933,20 @@ def main() -> int:
             from .tui import run_tui
             run_tui(dry_run=args.dry_run)
             return 0
+        elif args.command == "config":
+            if args.config_command == "show":
+                return cli.cmd_config_show()
+            elif args.config_command == "set":
+                return cli.cmd_config_set(args.key, args.value)
+            elif args.config_command == "reset":
+                return cli.cmd_config_reset()
+            elif args.config_command == "path":
+                return cli.cmd_config_path()
+            else:
+                parser.parse_args(["config", "--help"])
+                return 0
+        elif args.command == "save-rules":
+            return cli.cmd_save_rules()
         else:
             parser.print_help()
             return 0

@@ -1,0 +1,57 @@
+# Maintainer: Your Name <your.email@example.com>
+pkgname=deadlock-server-picker-git
+pkgver=r6.c23d675
+pkgrel=1
+pkgdesc="A native Linux tool to block/unblock Deadlock game server relays using iptables (git version)"
+arch=('any')
+url="https://github.com/shibne/DeadlockServerPicker-linux"
+license=('GPL-3.0-only')
+depends=('python' 'python-rich' 'iptables')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'git')
+optdepends=(
+    'bash-completion: for bash shell completions'
+    'fish: for fish shell completions'
+)
+provides=('deadlock-server-picker')
+conflicts=('deadlock-server-picker')
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "${srcdir}/DeadlockServerPicker-linux"
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "${srcdir}/DeadlockServerPicker-linux"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "${srcdir}/DeadlockServerPicker-linux"
+    
+    # Install the Python package
+    python -m installer --destdir="${pkgdir}" dist/*.whl
+    
+    # Install shell completions
+    install -Dm644 completions/deadlock-server-picker.bash \
+        "${pkgdir}/usr/share/bash-completion/completions/deadlock-server-picker"
+    install -Dm644 completions/deadlock-server-picker.bash \
+        "${pkgdir}/usr/share/bash-completion/completions/dsp"
+    
+    install -Dm644 completions/deadlock-server-picker.zsh \
+        "${pkgdir}/usr/share/zsh/site-functions/_deadlock-server-picker"
+    install -Dm644 completions/deadlock-server-picker.zsh \
+        "${pkgdir}/usr/share/zsh/site-functions/_dsp"
+    
+    install -Dm644 completions/deadlock-server-picker.fish \
+        "${pkgdir}/usr/share/fish/vendor_completions.d/deadlock-server-picker.fish"
+    install -Dm644 completions/deadlock-server-picker.fish \
+        "${pkgdir}/usr/share/fish/vendor_completions.d/dsp.fish"
+    
+    # Install license
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    
+    # Install documentation
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

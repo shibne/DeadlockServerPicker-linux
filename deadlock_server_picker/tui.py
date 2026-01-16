@@ -8,11 +8,14 @@ import subprocess
 import sys
 from typing import Optional
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from rich.box import ROUNDED
+from rich.layout import Layout
+from rich.live import Live
+from rich.columns import Columns
 
 from .models import Server, ServerStatus
 from .server_fetcher import ServerDataFetcher
@@ -35,6 +38,8 @@ class ServerPickerTUI:
         self.servers: list[Server] = []
         self.server_status: dict[str, bool] = {}  # code -> blocked
         self.ping_results: dict[str, Optional[float]] = {}  # code -> latency
+        self.output_lines: list[Text] = []  # Dynamic output buffer
+        self.max_output_lines = 20  # Max lines to keep in output buffer
     
     def _check_sudo_access(self) -> bool:
         """
@@ -180,6 +185,87 @@ class ServerPickerTUI:
         
         return summary
     
+    def _get_blocked_servers_list(self) -> Text:
+        """Get a compact list of blocked servers."""
+        blocked = [s for s in self.servers if self.server_status.get(s.code, False)]
+        
+        if not blocked:
+            return Text("None", style="dim green")
+        
+        result = Text()
+        codes = [s.code for s in blocked[:12]]  # Show max 12
+        result.append(", ".join(codes), style="red")
+        if len(blocked) > 12:
+            result.append(f" +{len(blocked) - 12} more", style="dim red")
+        
+        return result
+    
+    def _create_static_header(self) -> Panel:
+        """Create the static header panel with current status."""
+        # Build the status display
+        content = Text()
+        
+        # Title line
+        content.append("DEADLOCK SERVER PICKER", style="bold blue")
+        if self.dry_run:
+            content.append("  [DRY RUN]", style="bold yellow")
+        content.append("\n\n")
+        
+        # Stats line
+        total = len(self.servers)
+        blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
+        allowed = total - blocked
+        
+        content.append("Total: ", style="bold")
+        content.append(f"{total}", style="cyan")
+        content.append("  │  ", style="dim")
+        content.append("Allowed: ", style="bold")
+        content.append(f"{allowed}", style="bold green")
+        content.append("  │  ", style="dim")
+        content.append("Blocked: ", style="bold")
+        content.append(f"{blocked}", style="bold red")
+        content.append("\n")
+        
+        # Blocked servers line
+        content.append("Blocked: ", style="bold")
+        content.append_text(self._get_blocked_servers_list())
+        
+        return Panel(
+            content,
+            border_style="blue",
+            padding=(0, 1),
+        )
+    
+    def _add_output(self, text: str, style: str = "white"):
+        """Add a line to the output buffer."""
+        line = Text(text, style=style)
+        self.output_lines.append(line)
+        # Trim to max lines
+        if len(self.output_lines) > self.max_output_lines:
+            self.output_lines = self.output_lines[-self.max_output_lines:]
+    
+    def _clear_output(self):
+        """Clear the output buffer."""
+        self.output_lines = []
+    
+    def _get_output_panel(self) -> Panel:
+        """Get the dynamic output panel."""
+        if not self.output_lines:
+            content = Text("Type 'help' for commands, 'quit' to exit", style="dim")
+        else:
+            content = Text()
+            for i, line in enumerate(self.output_lines):
+                content.append_text(line)
+                if i < len(self.output_lines) - 1:
+                    content.append("\n")
+        
+        return Panel(
+            content,
+            title="Output",
+            border_style="green",
+            padding=(0, 1),
+        )
+    
     def _print_header(self):
         """Print the TUI header with status bar."""
         # Clear screen for fresh display
@@ -194,7 +280,14 @@ class ServerPickerTUI:
         self.console.print()
     
     def _print_help(self):
-        """Print help commands."""
+        """Print help commands (legacy, for tests)."""
+        self._show_help()
+    
+    def _show_help(self):
+        """Show help commands in output panel."""
+        self._clear_output()
+        self._add_output("─── Available Commands ───", "green")
+        
         help_lines = [
             ("list [region]", "Show servers (optionally filter by region)"),
             ("regions", "Show available region presets"),
@@ -206,27 +299,21 @@ class ServerPickerTUI:
             ("ping [region]", "Ping servers and show latency"),
             ("status", "Show current status"),
             ("reset", "Unblock all servers"),
-            ("clear", "Clear screen"),
+            ("clear", "Clear output"),
             ("help", "Show this help"),
             ("quit", "Exit"),
         ]
         
-        table = Table(box=ROUNDED, show_header=True, header_style="bold green", border_style="green")
-        table.add_column("Command", style="yellow", width=25)
-        table.add_column("Description", style="white")
-        
         for cmd, desc in help_lines:
-            table.add_row(cmd, desc)
-        
-        self.console.print(table)
+            self._add_output(f"  {cmd:25} {desc}", "yellow")
     
     def show_servers(self, filter_region: Optional[str] = None) -> bool:
         """Display server list. Returns True if successful."""
         if filter_region:
             region_servers = get_region_servers(filter_region)
             if not region_servers:
-                self.console.print(f"[red]Unknown region: {filter_region}[/]")
-                self.console.print("[dim]Use 'regions' to see available regions[/]")
+                self._add_output(f"Unknown region: {filter_region}", "red")
+                self._add_output("Use 'regions' to see available regions", "dim")
                 return False
             filtered = [s for s in self.servers if s.code in region_servers]
             title = f"Servers in {filter_region.upper()}"
@@ -235,130 +322,146 @@ class ServerPickerTUI:
             title = "All Servers"
         
         if not filtered:
-            self.console.print(f"[yellow]No servers found[/]")
+            self._add_output("No servers found", "yellow")
             return False
         
-        table = self._create_server_table(filtered, title)
-        self.console.print(table)
+        # Clear output and add server list
+        self._clear_output()
+        self._add_output(f"─── {title} ({len(filtered)}) ───", "cyan")
+        
+        for server in filtered:
+            blocked = self.server_status.get(server.code, False)
+            ping = self.ping_results.get(server.code)
+            
+            status_icon = "●" if blocked else "○"
+            status_color = "red" if blocked else "green"
+            
+            if ping is not None and isinstance(ping, (int, float)):
+                ping_str = f"{ping:.0f}ms"
+            else:
+                ping_str = "-"
+            
+            self._add_output(f"  {status_icon} {server.code:8} {server.name:30} {ping_str:>8}", status_color)
+        
+        self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
     
     def show_regions(self) -> bool:
         """Display available regions. Returns True."""
-        table = self._create_region_table()
-        self.console.print(table)
+        self._clear_output()
+        self._add_output("─── Available Regions ───", "magenta")
+        
+        shown_regions = set()
+        for alias, region_name in sorted(REGION_ALIASES.items()):
+            if region_name not in shown_regions:
+                shown_regions.add(region_name)
+                region_data = REGION_PRESETS[region_name]
+                server_count = len(region_data["servers"])
+                self._add_output(f"  {alias:6} {region_name:15} ({server_count} servers) - {region_data['description']}", "yellow")
+        
         return True
     
     def block_server(self, code: str) -> bool:
         """Block a single server by code. Returns True if successful."""
         server = self.fetcher.get_server_by_name(code)
         if not server:
-            self.console.print(f"[red]Server not found: {code}[/]")
+            self._add_output(f"Server not found: {code}", "red")
             return False
         
         if self.server_status.get(server.code, False):
-            self.console.print(f"[yellow]Server {code} is already blocked[/]")
+            self._add_output(f"Server {code} is already blocked", "yellow")
             return True
         
-        with self.console.status(f"[bold blue]Blocking {server.name}...[/]"):
-            blocked, _ = self.firewall.block_servers([server])
+        blocked, _ = self.firewall.block_servers([server])
         
         if blocked > 0:
             self.server_status[server.code] = True
-            self.console.print(f"[green]✓ Blocked {server.name}[/]")
+            self._add_output(f"✓ Blocked {server.name}", "green")
             return True
         else:
-            self.console.print(f"[red]✗ Failed to block {server.name}[/]")
+            self._add_output(f"✗ Failed to block {server.name}", "red")
             return False
     
     def unblock_server(self, code: str) -> bool:
         """Unblock a single server by code. Returns True if successful."""
         server = self.fetcher.get_server_by_name(code)
         if not server:
-            self.console.print(f"[red]Server not found: {code}[/]")
+            self._add_output(f"Server not found: {code}", "red")
             return False
         
         if not self.server_status.get(server.code, False):
-            self.console.print(f"[yellow]Server {code} is not blocked[/]")
+            self._add_output(f"Server {code} is not blocked", "yellow")
             return True
         
-        with self.console.status(f"[bold blue]Unblocking {server.name}...[/]"):
-            unblocked, _ = self.firewall.unblock_servers([server])
+        unblocked, _ = self.firewall.unblock_servers([server])
         
         if unblocked > 0:
             self.server_status[server.code] = False
-            self.console.print(f"[green]✓ Unblocked {server.name}[/]")
+            self._add_output(f"✓ Unblocked {server.name}", "green")
             return True
         else:
-            self.console.print(f"[red]✗ Failed to unblock {server.name}[/]")
+            self._add_output(f"✗ Failed to unblock {server.name}", "red")
             return False
     
     def allow_only_region(self, region: str) -> bool:
         """Block all servers except those in the specified region. Returns True if successful."""
         region_servers = get_region_servers(region)
         if not region_servers:
-            self.console.print(f"[red]Unknown region: {region}[/]")
-            self.console.print("[dim]Use 'regions' to see available regions[/]")
+            self._add_output(f"Unknown region: {region}", "red")
+            self._add_output("Use 'regions' to see available regions", "dim")
             return False
         
         to_block = [s for s in self.servers if s.code not in region_servers]
         to_unblock = [s for s in self.servers if s.code in region_servers]
         
-        self.console.print(f"[cyan]Allowing only {region.upper()} ({len(to_unblock)} servers)[/]")
-        self.console.print(f"[cyan]Blocking {len(to_block)} servers from other regions[/]")
+        self._add_output(f"Allowing only {region.upper()} ({len(to_unblock)} servers)", "cyan")
         
-        with self.console.status("[bold blue]Applying firewall rules...[/]"):
-            # First unblock region servers
-            if to_unblock:
-                self.firewall.unblock_servers(to_unblock)
-                for server in to_unblock:
-                    self.server_status[server.code] = False
-            
-            # Then block others
-            if to_block:
-                self.firewall.block_servers(to_block)
-                for server in to_block:
-                    self.server_status[server.code] = True
+        # First unblock region servers
+        if to_unblock:
+            self.firewall.unblock_servers(to_unblock)
+            for server in to_unblock:
+                self.server_status[server.code] = False
+        
+        # Then block others
+        if to_block:
+            self.firewall.block_servers(to_block)
+            for server in to_block:
+                self.server_status[server.code] = True
         
         blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
-        self.console.print(f"[green]✓ Done! {blocked} servers blocked[/]")
+        self._add_output(f"✓ Done! {blocked} servers blocked", "green")
         return True
     
     def block_region(self, region: str) -> bool:
         """Block all servers in a region. Returns True if successful."""
         region_servers = get_region_servers(region)
         if not region_servers:
-            self.console.print(f"[red]Unknown region: {region}[/]")
+            self._add_output(f"Unknown region: {region}", "red")
             return False
         
         to_block = [s for s in self.servers if s.code in region_servers]
         
-        self.console.print(f"[cyan]Blocking {len(to_block)} servers in {region.upper()}[/]")
+        self.firewall.block_servers(to_block)
+        for server in to_block:
+            self.server_status[server.code] = True
         
-        with self.console.status("[bold blue]Blocking servers...[/]"):
-            self.firewall.block_servers(to_block)
-            for server in to_block:
-                self.server_status[server.code] = True
-        
-        self.console.print(f"[green]✓ Blocked {region.upper()} servers[/]")
+        self._add_output(f"✓ Blocked {len(to_block)} servers in {region.upper()}", "green")
         return True
     
     def unblock_region(self, region: str) -> bool:
         """Unblock all servers in a region. Returns True if successful."""
         region_servers = get_region_servers(region)
         if not region_servers:
-            self.console.print(f"[red]Unknown region: {region}[/]")
+            self._add_output(f"Unknown region: {region}", "red")
             return False
         
         to_unblock = [s for s in self.servers if s.code in region_servers]
         
-        self.console.print(f"[cyan]Unblocking {len(to_unblock)} servers in {region.upper()}[/]")
+        self.firewall.unblock_servers(to_unblock)
+        for server in to_unblock:
+            self.server_status[server.code] = False
         
-        with self.console.status("[bold blue]Unblocking servers...[/]"):
-            self.firewall.unblock_servers(to_unblock)
-            for server in to_unblock:
-                self.server_status[server.code] = False
-        
-        self.console.print(f"[green]✓ Unblocked {region.upper()} servers[/]")
+        self._add_output(f"✓ Unblocked {len(to_unblock)} servers in {region.upper()}", "green")
         return True
     
     def ping_servers(self, region: Optional[str] = None) -> bool:
@@ -366,7 +469,7 @@ class ServerPickerTUI:
         if region:
             region_servers = get_region_servers(region)
             if not region_servers:
-                self.console.print(f"[red]Unknown region: {region}[/]")
+                self._add_output(f"Unknown region: {region}", "red")
                 return False
             servers_to_ping = [s for s in self.servers if s.code in region_servers]
         else:
@@ -374,16 +477,15 @@ class ServerPickerTUI:
         
         total = len(servers_to_ping)
         timeout = getattr(self.ping_service, 'timeout', 2.0)
-        self.console.print(f"[cyan]Pinging {total} servers (timeout: {timeout}s)...[/]\\n")
+        
+        self._clear_output()
+        self._add_output(f"Pinging {total} servers (timeout: {timeout}s)...", "cyan")
         
         # Ping each server with verbose output
         success_count = 0
         fail_count = 0
         
         for i, server in enumerate(servers_to_ping, 1):
-            # Show progress
-            self.console.print(f"[dim][{i}/{total}][/] Pinging [cyan]{server.code}[/] ({server.name})... ", end="")
-            
             # Ping this server
             latency = self.ping_service.ping_server(server)
             self.ping_results[server.code] = latency
@@ -392,34 +494,31 @@ class ServerPickerTUI:
             if latency is not None and isinstance(latency, (int, float)):
                 success_count += 1
                 if latency < 50:
-                    self.console.print(f"[green]{latency}ms[/]")
+                    style = "green"
                 elif latency < 100:
-                    self.console.print(f"[yellow]{latency}ms[/]")
+                    style = "yellow"
                 else:
-                    self.console.print(f"[red]{latency}ms[/]")
+                    style = "red"
+                self._add_output(f"  [{i}/{total}] {server.code:8} {latency:.0f}ms", style)
             else:
                 fail_count += 1
-                self.console.print(f"[red]TIMEOUT[/]")
+                self._add_output(f"  [{i}/{total}] {server.code:8} TIMEOUT", "red")
         
         # Summary
-        self.console.print(f"\\n[bold]Ping complete:[/] [green]{success_count} successful[/], [red]{fail_count} failed[/]\\n")
-        
-        # Show results in table
-        self.show_servers(region)
+        self._add_output(f"─── {success_count} successful, {fail_count} failed ───", "dim")
         return True
     
     def reset_all(self) -> bool:
         """Unblock all servers. Returns True."""
-        self.console.print("[yellow]Unblocking ALL servers...[/]")
+        self._add_output("Unblocking ALL servers...", "yellow")
         
-        with self.console.status("[bold blue]Resetting firewall rules...[/]"):
-            self.firewall.reset_firewall()
-            
-            # Update status
-            for server in self.servers:
-                self.server_status[server.code] = False
+        self.firewall.reset_firewall()
         
-        self.console.print("[green]✓ All servers unblocked[/]")
+        # Update status
+        for server in self.servers:
+            self.server_status[server.code] = False
+        
+        self._add_output("✓ All servers unblocked", "green")
         return True
     
     def show_status(self) -> bool:
@@ -428,35 +527,26 @@ class ServerPickerTUI:
         blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
         allowed = total - blocked
         
-        status_text = Text()
-        status_text.append("\n")
-        status_text.append("═" * 50 + "\n", style="blue")
-        status_text.append("          SERVER STATUS\n", style="bold blue")
-        status_text.append("═" * 50 + "\n", style="blue")
-        status_text.append("\n")
-        status_text.append("Total Servers:   ", style="bold")
-        status_text.append(f"{total}\n", style="cyan")
-        status_text.append("Allowed:         ", style="bold")
-        status_text.append(f"{allowed}\n", style="bold green")
-        status_text.append("Blocked:         ", style="bold")
-        status_text.append(f"{blocked}\n", style="bold red")
-        status_text.append("\n")
+        self._clear_output()
+        self._add_output("═══════════ SERVER STATUS ═══════════", "blue")
+        self._add_output(f"  Total Servers:   {total}", "cyan")
+        self._add_output(f"  Allowed:         {allowed}", "green")
+        self._add_output(f"  Blocked:         {blocked}", "red")
         
         if self.dry_run:
-            status_text.append("Mode:            ", style="bold")
-            status_text.append("DRY RUN (no changes made)\n", style="bold yellow")
+            self._add_output(f"  Mode:            DRY RUN", "yellow")
         
         # Show blocked servers
         blocked_servers = [s for s in self.servers if self.server_status.get(s.code, False)]
         if blocked_servers:
-            status_text.append("\n")
-            status_text.append("Blocked servers:\n", style="bold red")
+            self._add_output("", "white")
+            self._add_output("Blocked servers:", "bold red")
             for server in blocked_servers[:10]:
-                status_text.append(f"  • {server.code}: {server.name}\n", style="red")
+                self._add_output(f"  • {server.code}: {server.name}", "red")
             if len(blocked_servers) > 10:
-                status_text.append(f"  ... and {len(blocked_servers) - 10} more\n", style="dim red")
+                self._add_output(f"  ... and {len(blocked_servers) - 10} more", "dim")
         
-        self.console.print(status_text)
+        self._add_output("═════════════════════════════════════", "blue")
         return True
     
     def handle_command(self, command: str) -> tuple[bool, bool]:
@@ -487,35 +577,35 @@ class ServerPickerTUI:
         
         elif cmd == "block":
             if not args:
-                self.console.print("[red]Usage: block <server_code>[/]")
+                self._add_output("Usage: block <server_code>", "red")
                 return True, False
             success = self.block_server(args[0])
             return True, success
         
         elif cmd == "unblock":
             if not args:
-                self.console.print("[red]Usage: unblock <server_code>[/]")
+                self._add_output("Usage: unblock <server_code>", "red")
                 return True, False
             success = self.unblock_server(args[0])
             return True, success
         
         elif cmd in ("allow", "allow-only"):
             if not args:
-                self.console.print("[red]Usage: allow <region>[/]")
+                self._add_output("Usage: allow <region>", "red")
                 return True, False
             success = self.allow_only_region(args[0])
             return True, success
         
         elif cmd == "block-region":
             if not args:
-                self.console.print("[red]Usage: block-region <region>[/]")
+                self._add_output("Usage: block-region <region>", "red")
                 return True, False
             success = self.block_region(args[0])
             return True, success
         
         elif cmd == "unblock-region":
             if not args:
-                self.console.print("[red]Usage: unblock-region <region>[/]")
+                self._add_output("Usage: unblock-region <region>", "red")
                 return True, False
             success = self.unblock_region(args[0])
             return True, success
@@ -534,16 +624,16 @@ class ServerPickerTUI:
             return True, success
         
         elif cmd in ("help", "h", "?"):
-            self._print_help()
+            self._show_help()
             return True, True
         
         elif cmd in ("clear", "cls", "c"):
-            self._print_header()
+            self._clear_output()
             return True, True
         
         else:
-            self.console.print(f"[red]Unknown command: {cmd}[/]")
-            self.console.print("[dim]Type 'help' for available commands[/]")
+            self._add_output(f"Unknown command: {cmd}", "red")
+            self._add_output("Type 'help' for available commands", "dim")
             return True, False
     
     def run(self):
@@ -557,12 +647,6 @@ class ServerPickerTUI:
         # Now initialize
         self.initialize()
         
-        # Show header
-        self._print_header()
-        
-        self.console.print(f"[green]✓ Loaded {len(self.servers)} servers[/]")
-        self.console.print("[dim]Type 'help' for commands, 'quit' to exit[/]\n")
-        
         # Track interrupt count for double Ctrl+C exit
         interrupt_count = 0
         
@@ -572,21 +656,31 @@ class ServerPickerTUI:
             try:
                 # Reset interrupt count on successful command
                 interrupt_count = 0
-                # Simple input prompt that doesn't interfere with display
-                self.console.print(self._get_summary_text())
+                
+                # Clear screen and show static header
+                self.console.clear()
+                self.console.print(self._create_static_header())
+                
+                # Show output panel if there's output
+                if self.output_lines:
+                    self.console.print(self._get_output_panel())
+                else:
+                    self.console.print("[dim]Type 'help' for commands, 'quit' to exit[/]\n")
+                
+                # Get command input
                 command = self.console.input("[bold cyan]>>> [/]")
                 running, _ = self.handle_command(command)
             except KeyboardInterrupt:
                 interrupt_count += 1
                 if interrupt_count >= 2:
-                    self.console.print("\n[yellow]Force quit...[/]")
+                    self._add_output("Force quit...", "yellow")
                     running = False
                 else:
-                    self.console.print("\n[yellow]Press Ctrl+C again to force quit, or type 'quit' to exit cleanly[/]")
+                    self._add_output("Press Ctrl+C again to force quit, or type 'quit' to exit cleanly", "yellow")
             except EOFError:
                 running = False
             except Exception as e:
-                self.console.print(f"[red]Error: {e}[/]")
+                self._add_output(f"Error: {e}", "red")
         
         # Cleanup on exit
         self._cleanup_on_exit()

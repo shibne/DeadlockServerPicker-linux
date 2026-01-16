@@ -22,7 +22,7 @@ A native Linux command-line tool to block/unblock Deadlock game server relays us
 
 ```bash
 git clone https://github.com/shibne/DeadlockServerPicker-linux.git
-cd DeadlockServerPicker
+cd DeadlockServerPicker-linux
 pip install -e .
 ```
 

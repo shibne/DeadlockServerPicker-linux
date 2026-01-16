@@ -379,4 +379,53 @@ class FirewallManager:
             else:
                 return False, "Permission denied. Enable use_sudo or run as root."
         
+        return False, f"Unknown error: {result.stderr}"
+
+    def save_rules(self) -> bool:
+        """
+        Save current iptables rules to persist across reboots.
+        
+        Uses iptables-save to export rules. User should redirect output
+        to appropriate location based on their distro.
+        
+        Returns:
+            True if successful, False otherwise.
+        """
+        import shutil
+        
+        iptables_save = shutil.which("iptables-save")
+        if not iptables_save:
+            for path in ["/sbin/iptables-save", "/usr/sbin/iptables-save"]:
+                if shutil.which(path):
+                    iptables_save = path
+                    break
+        
+        if not iptables_save:
+            return False
+        
+        result = self._run_command([iptables_save], check=False)
+        return result.returncode == 0
+
+    def get_save_command(self) -> str:
+        """
+        Get the command to save iptables rules persistently.
+        
+        Returns distro-appropriate command string.
+        """
+        import os
+        
+        # Check for common distro configurations
+        if os.path.exists("/etc/iptables/rules.v4"):
+            # Debian/Ubuntu with iptables-persistent
+            return "sudo iptables-save | sudo tee /etc/iptables/rules.v4"
+        elif os.path.exists("/etc/sysconfig/iptables"):
+            # RHEL/CentOS/Fedora
+            return "sudo iptables-save | sudo tee /etc/sysconfig/iptables"
+        elif os.path.exists("/etc/iptables"):
+            # Arch Linux
+            return "sudo iptables-save | sudo tee /etc/iptables/iptables.rules"
+        else:
+            # Generic
+            return "sudo iptables-save > /path/to/rules.backup"
+        
         return False, f"Firewall check failed: {result.stderr}"
