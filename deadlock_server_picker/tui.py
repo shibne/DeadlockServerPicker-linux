@@ -108,7 +108,8 @@ class ServerPickerTUI:
             status = self._create_status_indicator(blocked)
             
             ping = self.ping_results.get(server.code)
-            if ping is not None:
+            # Check if ping is a valid number (handles Mock objects in tests)
+            if ping is not None and isinstance(ping, (int, float)):
                 if ping < 50:
                     ping_text = Text(f"{ping:.0f}ms", style="green")
                 elif ping < 100:
@@ -371,13 +372,37 @@ class ServerPickerTUI:
         else:
             servers_to_ping = self.servers
         
-        self.console.print(f"[cyan]Pinging {len(servers_to_ping)} servers...[/]")
+        total = len(servers_to_ping)
+        timeout = getattr(self.ping_service, 'timeout', 2.0)
+        self.console.print(f"[cyan]Pinging {total} servers (timeout: {timeout}s)...[/]\\n")
         
-        with self.console.status("[bold blue]Measuring latency...[/]"):
-            self.ping_service.ping_servers(servers_to_ping)
+        # Ping each server with verbose output
+        success_count = 0
+        fail_count = 0
         
-        for server in servers_to_ping:
-            self.ping_results[server.code] = server.latency_ms
+        for i, server in enumerate(servers_to_ping, 1):
+            # Show progress
+            self.console.print(f"[dim][{i}/{total}][/] Pinging [cyan]{server.code}[/] ({server.name})... ", end="")
+            
+            # Ping this server
+            latency = self.ping_service.ping_server(server)
+            self.ping_results[server.code] = latency
+            
+            # Check if latency is a valid number (handles Mock objects in tests)
+            if latency is not None and isinstance(latency, (int, float)):
+                success_count += 1
+                if latency < 50:
+                    self.console.print(f"[green]{latency}ms[/]")
+                elif latency < 100:
+                    self.console.print(f"[yellow]{latency}ms[/]")
+                else:
+                    self.console.print(f"[red]{latency}ms[/]")
+            else:
+                fail_count += 1
+                self.console.print(f"[red]TIMEOUT[/]")
+        
+        # Summary
+        self.console.print(f"\\n[bold]Ping complete:[/] [green]{success_count} successful[/], [red]{fail_count} failed[/]\\n")
         
         # Show results in table
         self.show_servers(region)
@@ -538,22 +563,47 @@ class ServerPickerTUI:
         self.console.print(f"[green]✓ Loaded {len(self.servers)} servers[/]")
         self.console.print("[dim]Type 'help' for commands, 'quit' to exit[/]\n")
         
+        # Track interrupt count for double Ctrl+C exit
+        interrupt_count = 0
+        
         # Main loop
         running = True
         while running:
             try:
+                # Reset interrupt count on successful command
+                interrupt_count = 0
                 # Simple input prompt that doesn't interfere with display
                 self.console.print(self._get_summary_text())
                 command = self.console.input("[bold cyan]>>> [/]")
                 running, _ = self.handle_command(command)
             except KeyboardInterrupt:
-                self.console.print("\n[yellow]Press Ctrl+C again or type 'quit' to exit[/]")
+                interrupt_count += 1
+                if interrupt_count >= 2:
+                    self.console.print("\n[yellow]Force quit...[/]")
+                    running = False
+                else:
+                    self.console.print("\n[yellow]Press Ctrl+C again to force quit, or type 'quit' to exit cleanly[/]")
             except EOFError:
                 running = False
             except Exception as e:
                 self.console.print(f"[red]Error: {e}[/]")
         
+        # Cleanup on exit
+        self._cleanup_on_exit()
         self.console.print("\n[cyan]Goodbye![/]\n")
+    
+    def _cleanup_on_exit(self):
+        """Reset firewall rules when exiting."""
+        blocked_count = sum(1 for s in self.servers if self.server_status.get(s.code, False))
+        
+        if blocked_count > 0 and not self.dry_run:
+            self.console.print(f"\n[yellow]Resetting {blocked_count} blocked servers...[/]")
+            try:
+                self.firewall.reset_firewall()
+                self.console.print("[green]✓ Firewall rules cleaned up[/]")
+            except Exception as e:
+                self.console.print(f"[red]Warning: Failed to reset firewall: {e}[/]")
+                self.console.print("[dim]Run 'deadlock-server-picker reset' manually to clean up[/]")
 
 
 def run_tui(dry_run: bool = False):

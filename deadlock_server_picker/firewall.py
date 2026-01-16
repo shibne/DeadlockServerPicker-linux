@@ -108,7 +108,12 @@ class FirewallManager:
         return f"{self.RULE_PREFIX}_{sanitized}"
 
     def ensure_chain_exists(self) -> None:
-        """Ensure the Deadlock Server Picker iptables chain exists."""
+        """
+        Ensure the Deadlock Server Picker iptables chain exists.
+        
+        Creates a dedicated chain and hooks it into OUTPUT and FORWARD chains
+        for complete traffic blocking (including Wine/Proton games).
+        """
         # Check if chain exists
         result = self._run_command(
             [self._iptables_path, "-L", self.CHAIN_NAME, "-n"],
@@ -119,9 +124,17 @@ class FirewallManager:
             # Create the chain
             self._run_command([self._iptables_path, "-N", self.CHAIN_NAME])
             
-            # Add jump from OUTPUT to our chain
+            # Add jump from OUTPUT to our chain (for native apps)
             self._run_command([
-                self._iptables_path, "-A", "OUTPUT",
+                self._iptables_path, "-I", "OUTPUT", "1",
+                "-j", self.CHAIN_NAME,
+                "-m", "comment", "--comment", self.RULE_PREFIX
+            ])
+            
+            # Add jump from FORWARD to our chain (for Wine/Proton/VMs)
+            # This ensures traffic routed through the system is also blocked
+            self._run_command([
+                self._iptables_path, "-I", "FORWARD", "1",
                 "-j", self.CHAIN_NAME,
                 "-m", "comment", "--comment", self.RULE_PREFIX
             ])
@@ -316,7 +329,7 @@ class FirewallManager:
         Remove all Deadlock Server Picker rules and chain.
         
         This is more thorough than clear_all_rules as it removes
-        the chain entirely.
+        the chain entirely, including references from OUTPUT and FORWARD chains.
         """
         # First flush the chain
         self._run_command(
@@ -327,6 +340,13 @@ class FirewallManager:
         # Remove jump rule from OUTPUT
         self._run_command(
             [self._iptables_path, "-D", "OUTPUT", "-j", self.CHAIN_NAME,
+             "-m", "comment", "--comment", self.RULE_PREFIX],
+            check=False
+        )
+        
+        # Remove jump rule from FORWARD (for Wine/Proton compatibility)
+        self._run_command(
+            [self._iptables_path, "-D", "FORWARD", "-j", self.CHAIN_NAME,
              "-m", "comment", "--comment", self.RULE_PREFIX],
             check=False
         )
