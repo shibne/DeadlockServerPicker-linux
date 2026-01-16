@@ -918,6 +918,10 @@ Examples:
                                           help="Allow only specified region (block all others)")
     allow_region.add_argument("region", help="Region name or alias")
     
+    # Add 'allow' as alias for 'allow-region'
+    allow_alias = subparsers.add_parser("allow", help="Allow only specified region (alias for allow-region)")
+    allow_alias.add_argument("region", help="Region name or alias")
+    
     block_region = subparsers.add_parser("block-region", help="Block all servers in a region")
     block_region.add_argument("region", help="Region name or alias")
     
@@ -1003,6 +1007,8 @@ def main() -> int:
         elif args.command == "list-region":
             return cli.cmd_list_region(args.region, ping=args.ping)
         elif args.command == "allow-region":
+            return cli.cmd_allow_region(args.region)
+        elif args.command == "allow":
             return cli.cmd_allow_region(args.region)
         elif args.command == "block-region":
             return cli.cmd_block_region(args.region)

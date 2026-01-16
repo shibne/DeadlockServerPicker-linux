@@ -389,6 +389,21 @@ flush chain inet {self.TABLE_NAME} forward_block
     
     def reset_firewall(self) -> None:
         """Remove all rules and delete the table entirely."""
+        # First flush the chains to remove all rules
+        self._run_command([
+            self._nft_path, "flush", "chain", "inet", self.TABLE_NAME, self.CHAIN_NAME
+        ], check=False)
+        self._run_command([
+            self._nft_path, "flush", "chain", "inet", self.TABLE_NAME, "forward_block"
+        ], check=False)
+        # Then delete the chains
+        self._run_command([
+            self._nft_path, "delete", "chain", "inet", self.TABLE_NAME, self.CHAIN_NAME
+        ], check=False)
+        self._run_command([
+            self._nft_path, "delete", "chain", "inet", self.TABLE_NAME, "forward_block"
+        ], check=False)
+        # Finally delete the table
         self._run_command([
             self._nft_path, "delete", "table", "inet", self.TABLE_NAME
         ], check=False)

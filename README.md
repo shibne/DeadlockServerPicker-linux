@@ -36,25 +36,25 @@ pip install -e .
 ### Basic Commands
 
 ```bash
-# List all servers
+# List all servers with geographic info
 deadlock-server-picker list
 
 # List with ping times
 deadlock-server-picker list --ping
 
 # Block servers
-deadlock-server-picker block "Singapore" "Hong Kong"
+deadlock-server-picker block sgp hkg
 
 # Unblock servers
-deadlock-server-picker unblock "Singapore"
+deadlock-server-picker unblock sgp
 
 # Unblock all
 deadlock-server-picker unblock --all
 
 # Block all except specific servers
-deadlock-server-picker block-except "Singapore" "Tokyo"
+deadlock-server-picker block-except sgp tyo
 
-# Reset all firewall rules
+# Reset all firewall rules (removes the entire chain)
 deadlock-server-picker reset
 ```
 
@@ -64,7 +64,8 @@ deadlock-server-picker reset
 # List available regions
 deadlock-server-picker regions
 
-# Allow only a region (block all others)
+# Allow only a region (block all others) - two ways:
+deadlock-server-picker allow na
 deadlock-server-picker allow-region na
 
 # Block a region
@@ -80,7 +81,7 @@ deadlock-server-picker unblock-region eu
 deadlock-server-picker tui
 ```
 
-Commands: `list`, `regions`, `block <code>`, `unblock <code>`, `allow <region>`, `ping`, `history`, `best`, `geo`, `wine`, `reset`, `quit`
+Commands: `list`, `regions`, `block <code>`, `unblock <code>`, `allow <region>`, `ping`, `history`, `best`, `wine`, `reset`, `quit`
 
 ### Configuration
 
