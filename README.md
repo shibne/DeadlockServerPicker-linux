@@ -116,4 +116,6 @@ GPL-3.0
 
 ## Disclaimer
 
-This project is not affiliated with Valve Corporation.
+This is an unofficial, community-made tool. It is not affiliated with, endorsed by, or associated with Valve Corporation in any way.
+
+**Use at your own risk.** I am not responsible for any damages, issues, or consequences that may arise from using this software. This includes but is not limited to system instability, network issues, or any other problems that may occur. By using this tool, you accept full responsibility for any outcomes.
