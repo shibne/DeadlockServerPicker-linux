@@ -838,6 +838,13 @@ class ServerPickerTUI:
         
         self.firewall.reset_firewall()
         
+        # Clear default_region so it doesn't re-apply on next start
+        config = self.config_manager.load()
+        if config.default_region:
+            config.default_region = None
+            self.config_manager.save(config)
+            self._add_output("  Cleared default region preference", "dim")
+        
         # Update status
         for server in self.servers:
             self.server_status[server.code] = False

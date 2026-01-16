@@ -596,6 +596,15 @@ class DeadlockServerPickerCLI:
         """Reset all firewall rules."""
         try:
             self.firewall.reset_firewall()
+            
+            # Clear default_region so TUI doesn't re-apply it on next start
+            from .config import ConfigManager
+            config_manager = ConfigManager()
+            config = config_manager.load()
+            if config.default_region:
+                config.default_region = None
+                config_manager.save(config)
+            
             print(colorize("All Deadlock Server Picker firewall rules removed.", Colors.GREEN))
             return 0
         except FirewallError as e:
