@@ -8,6 +8,7 @@ import sys
 import os
 from typing import Optional
 
+from . import __version__
 from .server_fetcher import ServerDataFetcher, ServerFetchError
 from .firewall import FirewallManager, FirewallError
 from .ping_service import PingService
@@ -844,7 +845,7 @@ Examples:
                        help="Use clustered server view")
     parser.add_argument("--config-dir", type=str,
                        help="Custom configuration directory")
-    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     # Subcommands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
