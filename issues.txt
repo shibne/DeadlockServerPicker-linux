@@ -1,115 +1,14 @@
-# Deadlock Server Picker - Future Features & Notes
+# Completed Tasks
 
-## Completed Features ✓
-- [x] Persistent blocking (dsp save-rules)
-- [x] Config file (~/.config/deadlock-server-picker/config.json)
-- [x] Short command alias (dsp, dsp-tui)
-- [x] Shell completions (bash, zsh, fish)
-- [x] AUR package (PKGBUILD, PKGBUILD-git)
-- [x] Static TUI header with dynamic output panel
-- [x] Wine/Proton support (FORWARD chain)
-- [x] Verbose ping output
-- [x] Double Ctrl+C to force quit
+All tasks from the original issues have been completed:
 
-## Planned Features
+1. ✓ Server list display - Now shows in compact 4-column format to fit more servers on screen
+2. ✓ AUR publishing guide - Created detailed AUR_PUBLISHING.md with step-by-step instructions
+3. ✓ .gitignore updated - Added makepkg artifacts (src/, pkg/, *.pkg.tar.zst, .SRCINFO)
+4. ✓ todo.txt created - Lists all planned features organized by priority
 
-### High Priority
-- [ ] Favorite servers quick-select (from config)
-- [ ] Auto-apply always_block/never_block on startup
-- [ ] Remember last used region preference
-
-### Medium Priority
-- [ ] nftables support (modern iptables replacement)
-- [ ] IPv6 support
-- [ ] Async parallel ping for faster results
-- [ ] Server latency history/tracking
-- [ ] Export/import server presets
-
-### Low Priority
-- [ ] Auto-start with system (systemd user service)
-- [ ] Desktop notifications when match found
-- [ ] GUI version (GTK/Qt)
-- [ ] Better Wine/Proton auto-detection
-- [ ] Server geolocation display
-
-## Known Issues
-- None currently
-
----
-
-# Publishing to AUR (Arch User Repository)
-
-## Prerequisites
-1. Create an AUR account at https://aur.archlinux.org/register
-2. Generate SSH key and add to AUR account
-3. Install required packages: `sudo pacman -S git openssh`
-
-## Steps to Publish
-
-### 1. Create a GitHub Release
-```bash
-# Tag the release
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-```
-
-### 2. Calculate the sha256sum
-```bash
-# Download and hash the release tarball
-wget https://github.com/shibne/DeadlockServerPicker-linux/archive/refs/tags/v1.0.0.tar.gz
-sha256sum v1.0.0.tar.gz
-# Update PKGBUILD sha256sums with the actual hash
-```
-
-### 3. Clone the AUR Repository
-```bash
-# First time setup
-git clone ssh://aur@aur.archlinux.org/deadlock-server-picker.git aur-package
-cd aur-package
-
-# Or for -git version
-git clone ssh://aur@aur.archlinux.org/deadlock-server-picker-git.git aur-package-git
-```
-
-### 4. Copy PKGBUILD and Generate .SRCINFO
-```bash
-# Copy your PKGBUILD
-cp /path/to/DeadlockServerPicker-linux/PKGBUILD .
-
-# Generate .SRCINFO (required by AUR)
-makepkg --printsrcinfo > .SRCINFO
-
-# Test build locally first!
-makepkg -si
-```
-
-### 5. Commit and Push to AUR
-```bash
-git add PKGBUILD .SRCINFO
-git commit -m "Initial upload: deadlock-server-picker 1.0.0"
-git push
-```
-
-### 6. Updating the Package
-```bash
-# Update version in PKGBUILD
-# Update sha256sum for new release
-# Regenerate .SRCINFO
-makepkg --printsrcinfo > .SRCINFO
-
-git add PKGBUILD .SRCINFO
-git commit -m "Update to version X.Y.Z"
-git push
-```
-
-## Tips
-- Always test `makepkg -si` locally before pushing
-- Use `namcap PKGBUILD` and `namcap *.pkg.tar.zst` to check for issues
-- AUR packages should not include pre-built binaries
-- Keep the PKGBUILD minimal and clean
-- Respond to user comments on the AUR page
-
-## Useful Links
-- AUR Submission Guidelines: https://wiki.archlinux.org/title/AUR_submission_guidelines
-- PKGBUILD Reference: https://wiki.archlinux.org/title/PKGBUILD
-- makepkg: https://wiki.archlinux.org/title/Makepkg
+## Files Created/Modified
+- AUR_PUBLISHING.md - Complete AUR publishing guide
+- todo.txt - Future features and completed features list
+- .gitignore - Added AUR/makepkg ignores
+- deadlock_server_picker/tui.py - Compact multi-column server list

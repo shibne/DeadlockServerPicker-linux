@@ -45,9 +45,9 @@ dsp = "deadlock_server_picker.cli:main"
 dsp-tui = "deadlock_server_picker.tui:main"
 
 [project.urls]
-Homepage = "https://github.com/your-username/deadlock-server-picker"
-Repository = "https://github.com/your-username/deadlock-server-picker"
-Issues = "https://github.com/your-username/deadlock-server-picker/issues"
+Homepage = "https://github.com/shibne/DeadlockServerPicker-linux"
+Repository = "https://github.com/shibne/DeadlockServerPicker-linux"
+Issues = "https://github.com/shibne/DeadlockServerPicker-linux/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

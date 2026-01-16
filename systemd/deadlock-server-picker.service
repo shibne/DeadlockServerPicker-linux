@@ -1,0 +1,13 @@
+[Unit]
+Description=Deadlock Server Picker - Apply firewall rules on boot
+After=network.target iptables.service nftables.service
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/deadlock-server-picker apply
+ExecStop=/usr/bin/deadlock-server-picker reset
+
+[Install]
+WantedBy=multi-user.target

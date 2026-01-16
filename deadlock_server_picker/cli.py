@@ -480,6 +480,79 @@ class DeadlockServerPickerCLI:
                 print(colorize(f"Error: {e}", Colors.RED))
                 return 1
 
+    def cmd_apply(self) -> int:
+        """Apply config preferences (always_block, never_block, default_region)."""
+        from .config import ConfigManager
+        
+        config_manager = ConfigManager()
+        config = config_manager.load()
+        
+        if not self._ensure_servers_loaded():
+            return 1
+        
+        print(colorize("Applying configuration preferences...", Colors.CYAN))
+        
+        servers = self._get_servers()
+        applied = []
+        
+        # Auto-apply always_block servers
+        if config.always_block:
+            to_block = []
+            for code in config.always_block:
+                server = self.fetcher.get_server_by_name(code, clustered=self.clustered)
+                if server:
+                    to_block.append(server)
+            
+            if to_block:
+                try:
+                    blocked, _ = self.firewall.block_servers(to_block)
+                    if blocked > 0:
+                        applied.append(f"blocked {blocked} always_block servers")
+                except FirewallError as e:
+                    print(colorize(f"Error blocking: {e}", Colors.RED))
+        
+        # Auto-apply never_block servers (unblock if blocked)
+        if config.never_block:
+            to_unblock = []
+            for code in config.never_block:
+                server = self.fetcher.get_server_by_name(code, clustered=self.clustered)
+                if server:
+                    to_unblock.append(server)
+            
+            if to_unblock:
+                try:
+                    unblocked, _ = self.firewall.unblock_servers(to_unblock)
+                    if unblocked > 0:
+                        applied.append(f"unblocked {unblocked} never_block servers")
+                except FirewallError as e:
+                    print(colorize(f"Error unblocking: {e}", Colors.RED))
+        
+        # Apply default region
+        if config.default_region:
+            region_servers = get_region_servers(config.default_region)
+            if region_servers:
+                to_block = [s for code, s in servers.items() 
+                           if code not in region_servers and code not in config.never_block]
+                to_unblock = [s for code, s in servers.items() 
+                             if code in region_servers and code not in config.always_block]
+                
+                try:
+                    if to_unblock:
+                        self.firewall.unblock_servers(to_unblock)
+                    if to_block:
+                        self.firewall.block_servers(to_block)
+                    applied.append(f"applied region {config.default_region}")
+                except FirewallError as e:
+                    print(colorize(f"Error applying region: {e}", Colors.RED))
+        
+        if applied:
+            print(colorize(f"✓ Applied: {', '.join(applied)}", Colors.GREEN))
+        else:
+            print(colorize("No preferences configured to apply.", Colors.YELLOW))
+            print(colorize("Use 'config set default_region <region>' to set preferences.", Colors.DIM))
+        
+        return 0
+
     def cmd_status(self) -> int:
         """Show current status and blocked servers."""
         # Check firewall permissions
@@ -829,6 +902,9 @@ Examples:
     # Reset command
     subparsers.add_parser("reset", help="Reset all firewall rules")
 
+    # Apply command
+    subparsers.add_parser("apply", help="Apply config preferences (for systemd service)")
+
     # Region commands
     subparsers.add_parser("regions", help="List available region presets")
     
@@ -919,6 +995,8 @@ def main() -> int:
             return cli.cmd_status()
         elif args.command == "reset":
             return cli.cmd_reset()
+        elif args.command == "apply":
+            return cli.cmd_apply()
         elif args.command == "regions":
             return cli.cmd_regions()
         elif args.command == "list-region":

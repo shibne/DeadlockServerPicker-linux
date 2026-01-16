@@ -27,6 +27,9 @@ class Config:
     # Whether to use sudo (set False if running as root)
     use_sudo: bool = True
     
+    # Firewall backend: 'auto', 'iptables', or 'nftables'
+    firewall_backend: str = "auto"
+    
     # Favorite servers (codes)
     favorites: list[str] = field(default_factory=list)
     

@@ -1,0 +1,12 @@
+[Unit]
+Description=Deadlock Server Picker - Apply firewall rules on login
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/bin/deadlock-server-picker apply
+ExecStop=%h/.local/bin/deadlock-server-picker reset
+
+[Install]
+WantedBy=default.target

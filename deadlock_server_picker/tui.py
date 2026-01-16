@@ -20,9 +20,14 @@ from rich.columns import Columns
 from .models import Server, ServerStatus
 from .server_fetcher import ServerDataFetcher
 from .firewall import FirewallManager
+from .nftables import create_firewall_manager, detect_firewall_backend
 from .ping_service import PingService
 from .preset_manager import PresetManager
 from .regions import REGION_PRESETS, REGION_ALIASES, get_region_servers
+from .config import ConfigManager
+from .latency_history import LatencyHistoryManager
+from .wine_detect import check_deadlock_status
+from .geolocation import get_server_location, format_location_table
 
 
 class ServerPickerTUI:
@@ -31,10 +36,22 @@ class ServerPickerTUI:
     def __init__(self, dry_run: bool = False):
         self.console = Console()
         self.fetcher = ServerDataFetcher()
-        self.firewall = FirewallManager(dry_run=dry_run)
+        self.config_manager = ConfigManager()
+        self.dry_run = dry_run
+        
+        # Initialize firewall based on config
+        config = self.config_manager.load()
+        backend = config.firewall_backend if config.firewall_backend != "auto" else None
+        self.firewall = create_firewall_manager(
+            backend=backend, 
+            dry_run=dry_run, 
+            use_sudo=config.use_sudo
+        )
+        self.firewall_backend = detect_firewall_backend() if backend is None else backend
+        
         self.ping_service = PingService()
         self.preset_manager = PresetManager()
-        self.dry_run = dry_run
+        self.latency_history = LatencyHistoryManager()
         self.servers: list[Server] = []
         self.server_status: dict[str, bool] = {}  # code -> blocked
         self.ping_results: dict[str, Optional[float]] = {}  # code -> latency
@@ -70,7 +87,7 @@ class ServerPickerTUI:
             return False
     
     def initialize(self):
-        """Load servers and check their status."""
+        """Load servers, check status, and apply config preferences."""
         with self.console.status("[bold blue]Fetching server list from Steam...[/]"):
             self.fetcher.fetch()
             self.servers = list(self.fetcher.get_servers().values())
@@ -84,6 +101,54 @@ class ServerPickerTUI:
                     for name in blocked_names
                 )
                 self.server_status[server.code] = is_blocked
+        
+        # Apply config preferences
+        config = self.config_manager.load()
+        auto_applied = []
+        
+        # Auto-apply always_block servers from config
+        if config.always_block:
+            for code in config.always_block:
+                server = self.fetcher.get_server_by_name(code)
+                if server and not self.server_status.get(server.code, False):
+                    blocked, _ = self.firewall.block_servers([server])
+                    if blocked > 0:
+                        self.server_status[server.code] = True
+                        auto_applied.append(f"blocked {code}")
+        
+        # Auto-apply never_block servers (unblock if blocked)
+        if config.never_block:
+            for code in config.never_block:
+                server = self.fetcher.get_server_by_name(code)
+                if server and self.server_status.get(server.code, False):
+                    unblocked, _ = self.firewall.unblock_servers([server])
+                    if unblocked > 0:
+                        self.server_status[server.code] = False
+                        auto_applied.append(f"unblocked {code}")
+        
+        # Apply last used region if set
+        if config.default_region:
+            region_servers = get_region_servers(config.default_region)
+            if region_servers:
+                to_block = [s for s in self.servers if s.code not in region_servers 
+                           and s.code not in config.never_block]
+                to_unblock = [s for s in self.servers if s.code in region_servers
+                             and s.code not in config.always_block]
+                
+                if to_unblock:
+                    self.firewall.unblock_servers(to_unblock)
+                    for server in to_unblock:
+                        self.server_status[server.code] = False
+                
+                if to_block:
+                    self.firewall.block_servers(to_block)
+                    for server in to_block:
+                        self.server_status[server.code] = True
+                
+                auto_applied.append(f"applied region {config.default_region}")
+        
+        if auto_applied:
+            self._add_output(f"Auto-applied: {', '.join(auto_applied)}", "cyan")
     
     def _create_status_indicator(self, blocked: bool) -> Text:
         """Create a colored status indicator."""
@@ -205,10 +270,11 @@ class ServerPickerTUI:
         # Build the status display
         content = Text()
         
-        # Title line
+        # Title line with backend info
         content.append("DEADLOCK SERVER PICKER", style="bold blue")
         if self.dry_run:
             content.append("  [DRY RUN]", style="bold yellow")
+        content.append(f"  [{self.firewall_backend}]", style="dim cyan")
         content.append("\n\n")
         
         # Stats line
@@ -297,6 +363,10 @@ class ServerPickerTUI:
             ("block-region <region>", "Block all servers in region"),
             ("unblock-region <region>", "Unblock all servers in region"),
             ("ping [region]", "Ping servers and show latency"),
+            ("history [server]", "Show latency history"),
+            ("best", "Show servers with best latency"),
+            ("geo [server]", "Show server geographic locations"),
+            ("wine", "Show Wine/Proton status"),
             ("status", "Show current status"),
             ("reset", "Unblock all servers"),
             ("clear", "Clear output"),
@@ -325,23 +395,47 @@ class ServerPickerTUI:
             self._add_output("No servers found", "yellow")
             return False
         
-        # Clear output and add server list
+        # Clear output and add server list in compact multi-column format
         self._clear_output()
         self._add_output(f"─── {title} ({len(filtered)}) ───", "cyan")
         
+        # Build compact server entries
+        entries = []
         for server in filtered:
             blocked = self.server_status.get(server.code, False)
             ping = self.ping_results.get(server.code)
             
             status_icon = "●" if blocked else "○"
-            status_color = "red" if blocked else "green"
             
             if ping is not None and isinstance(ping, (int, float)):
                 ping_str = f"{ping:.0f}ms"
             else:
-                ping_str = "-"
+                ping_str = ""
             
-            self._add_output(f"  {status_icon} {server.code:8} {server.name:30} {ping_str:>8}", status_color)
+            # Compact format: icon code (ping)
+            if ping_str:
+                entry = f"{status_icon} {server.code:6} {ping_str:>5}"
+            else:
+                entry = f"{status_icon} {server.code:6}      "
+            entries.append((entry, blocked))
+        
+        # Display in 4 columns
+        cols = 4
+        col_width = 18
+        rows = (len(entries) + cols - 1) // cols
+        
+        for row in range(rows):
+            line_parts = []
+            for col in range(cols):
+                idx = row + col * rows
+                if idx < len(entries):
+                    entry, blocked = entries[idx]
+                    line_parts.append(entry)
+            
+            # Determine color based on if any in row are blocked
+            line = "  ".join(f"{p:<{col_width}}" for p in line_parts)
+            # Use mixed coloring - just use white for the line, icons show status
+            self._add_output(line, "white")
         
         self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
@@ -393,15 +487,11 @@ class ServerPickerTUI:
             self._add_output(f"Server {code} is not blocked", "yellow")
             return True
         
-        unblocked, _ = self.firewall.unblock_servers([server])
-        
-        if unblocked > 0:
-            self.server_status[server.code] = False
-            self._add_output(f"✓ Unblocked {server.name}", "green")
-            return True
-        else:
-            self._add_output(f"✗ Failed to unblock {server.name}", "red")
-            return False
+        # In dry_run mode or when firewall operation succeeds, update status
+        self.firewall.unblock_servers([server])
+        self.server_status[server.code] = False
+        self._add_output(f"✓ Unblocked {server.name}", "green")
+        return True
     
     def allow_only_region(self, region: str) -> bool:
         """Block all servers except those in the specified region. Returns True if successful."""
@@ -411,8 +501,11 @@ class ServerPickerTUI:
             self._add_output("Use 'regions' to see available regions", "dim")
             return False
         
-        to_block = [s for s in self.servers if s.code not in region_servers]
-        to_unblock = [s for s in self.servers if s.code in region_servers]
+        config = self.config_manager.load()
+        to_block = [s for s in self.servers if s.code not in region_servers
+                   and s.code not in config.never_block]
+        to_unblock = [s for s in self.servers if s.code in region_servers
+                     and s.code not in config.always_block]
         
         self._add_output(f"Allowing only {region.upper()} ({len(to_unblock)} servers)", "cyan")
         
@@ -428,8 +521,11 @@ class ServerPickerTUI:
             for server in to_block:
                 self.server_status[server.code] = True
         
+        # Save region preference to config
+        self.config_manager.set("default_region", region)
+        
         blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
-        self._add_output(f"✓ Done! {blocked} servers blocked", "green")
+        self._add_output(f"✓ Done! {blocked} servers blocked, region preference saved", "green")
         return True
     
     def block_region(self, region: str) -> bool:
@@ -465,7 +561,7 @@ class ServerPickerTUI:
         return True
     
     def ping_servers(self, region: Optional[str] = None) -> bool:
-        """Ping all servers and display results. Returns True."""
+        """Ping all servers in parallel and display results. Returns True."""
         if region:
             region_servers = get_region_servers(region)
             if not region_servers:
@@ -479,16 +575,40 @@ class ServerPickerTUI:
         timeout = getattr(self.ping_service, 'timeout', 2.0)
         
         self._clear_output()
-        self._add_output(f"Pinging {total} servers (timeout: {timeout}s)...", "cyan")
+        self._add_output(f"Pinging {total} servers in parallel (timeout: {timeout}s)...", "cyan")
         
-        # Ping each server with verbose output
+        # Use concurrent ping for speed
+        results = self.ping_service.ping_servers(servers_to_ping)
+        
+        # Handle None result (e.g., from mocks in tests)
+        if results is None:
+            results = {}
+        
+        # Save to history
+        self.latency_history.record_batch({
+            code: int(lat) if lat is not None else None 
+            for code, lat in results.items()
+        })
+        
+        # Store and display results
         success_count = 0
         fail_count = 0
         
-        for i, server in enumerate(servers_to_ping, 1):
-            # Ping this server
-            latency = self.ping_service.ping_server(server)
+        # Sort by latency (successes first, then timeouts)
+        sorted_servers = sorted(
+            servers_to_ping,
+            key=lambda s: (results.get(s.code) is None, results.get(s.code) or 9999)
+        )
+        
+        for server in sorted_servers:
+            latency = results.get(server.code)
             self.ping_results[server.code] = latency
+            
+            # Get history summary for this server
+            hist = self.latency_history.get_summary(server.code)
+            hist_str = ""
+            if hist and hist['avg_latency']:
+                hist_str = f" (avg: {hist['avg_latency']:.0f}ms)"
             
             # Check if latency is a valid number (handles Mock objects in tests)
             if latency is not None and isinstance(latency, (int, float)):
@@ -499,13 +619,166 @@ class ServerPickerTUI:
                     style = "yellow"
                 else:
                     style = "red"
-                self._add_output(f"  [{i}/{total}] {server.code:8} {latency:.0f}ms", style)
+                self._add_output(f"  {server.code:8} {latency:.0f}ms{hist_str}", style)
             else:
                 fail_count += 1
-                self._add_output(f"  [{i}/{total}] {server.code:8} TIMEOUT", "red")
+                self._add_output(f"  {server.code:8} TIMEOUT{hist_str}", "red")
         
         # Summary
         self._add_output(f"─── {success_count} successful, {fail_count} failed ───", "dim")
+        return True
+    
+    def show_history(self, server_code: Optional[str] = None) -> bool:
+        """Show latency history for a server or summary for all. Returns True."""
+        self._clear_output()
+        
+        if server_code:
+            # Show detailed history for specific server
+            summary = self.latency_history.get_summary(server_code)
+            if not summary:
+                self._add_output(f"No history for server: {server_code}", "yellow")
+                self._add_output("Run 'ping' first to collect data.", "dim")
+                return False
+            
+            self._add_output(f"─── Latency History: {server_code.upper()} ───", "cyan")
+            self._add_output(f"  Measurements:   {summary['measurements']}", "white")
+            self._add_output(f"  Average:        {summary['avg_latency']:.0f}ms", "white")
+            self._add_output(f"  Min:            {summary['min_latency']}ms", "green")
+            self._add_output(f"  Max:            {summary['max_latency']}ms", "red")
+            self._add_output(f"  Success Rate:   {summary['success_rate']}%", "white")
+        else:
+            # Show summary for all servers
+            histories = self.latency_history.get_all_histories()
+            if not histories:
+                self._add_output("No latency history recorded yet.", "yellow")
+                self._add_output("Run 'ping' first to collect data.", "dim")
+                return False
+            
+            self._add_output("─── Latency History Summary ───", "cyan")
+            self._add_output(f"  Servers tracked: {len(histories)}", "white")
+            
+            # Sort by avg latency
+            sorted_servers = sorted(
+                [(code, hist.avg_latency) for code, hist in histories.items() if hist.avg_latency],
+                key=lambda x: x[1]
+            )
+            
+            self._add_output("", "white")
+            self._add_output("Top 10 by average latency:", "white")
+            for code, avg in sorted_servers[:10]:
+                if avg < 50:
+                    style = "green"
+                elif avg < 100:
+                    style = "yellow"
+                else:
+                    style = "red"
+                self._add_output(f"  {code:8} {avg:.0f}ms", style)
+        
+        return True
+    
+    def show_best_servers(self, count: int = 10) -> bool:
+        """Show servers with best latency. Returns True."""
+        best = self.latency_history.get_best_servers(count)
+        
+        self._clear_output()
+        
+        if not best:
+            self._add_output("No latency data available.", "yellow")
+            self._add_output("Run 'ping' first to collect data.", "dim")
+            return False
+        
+        self._add_output(f"─── Best {len(best)} Servers by Latency ───", "cyan")
+        
+        for i, (code, avg) in enumerate(best, 1):
+            if avg < 50:
+                style = "green"
+            elif avg < 100:
+                style = "yellow"
+            else:
+                style = "red"
+            blocked = "●" if self.server_status.get(code, False) else "○"
+            self._add_output(f"  {i:2}. {blocked} {code:8} avg: {avg:.0f}ms", style)
+        
+        self._add_output("", "white")
+        self._add_output("● = blocked, ○ = allowed", "dim")
+        return True
+    
+    def show_wine_status(self) -> bool:
+        """Show Wine/Proton detection status. Returns True."""
+        self._clear_output()
+        self._add_output("─── Wine/Proton Status ───", "cyan")
+        
+        status = check_deadlock_status()
+        
+        # Components
+        self._add_output("", "white")
+        self._add_output("Installed Components:", "white")
+        for comp, installed in status['components'].items():
+            icon = "✓" if installed else "✗"
+            style = "green" if installed else "red"
+            self._add_output(f"  {icon} {comp}", style)
+        
+        # Running processes
+        self._add_output("", "white")
+        if status['deadlock_running']:
+            self._add_output(f"Deadlock Running: Yes ({len(status['processes'])} process(es))", "green")
+            for proc in status['processes']:
+                self._add_output(f"  • {proc.description}", "cyan")
+        else:
+            self._add_output("Deadlock Running: No", "yellow")
+        
+        # Firewall note
+        self._add_output("", "white")
+        self._add_output("Firewall Note:", "white")
+        if status['proton_installed'] or status['wine_installed']:
+            self._add_output("  FORWARD chain is enabled for Wine/Proton compatibility", "green")
+        else:
+            self._add_output("  Wine/Proton not detected - using OUTPUT chain only", "dim")
+        
+        return True
+    
+    def show_geo(self, server_code: Optional[str] = None) -> bool:
+        """Show server geographic locations. Returns True."""
+        self._clear_output()
+        
+        if server_code:
+            # Show specific server location
+            loc = get_server_location(server_code)
+            if not loc:
+                self._add_output(f"No location data for server: {server_code}", "yellow")
+                return False
+            
+            blocked = self.server_status.get(server_code, False)
+            status = "BLOCKED" if blocked else "ALLOWED"
+            status_style = "red" if blocked else "green"
+            
+            self._add_output(f"─── Server Location: {server_code.upper()} ───", "cyan")
+            self._add_output(f"  City:      {loc.city}", "white")
+            self._add_output(f"  Country:   {loc.country}", "white")
+            self._add_output(f"  Region:    {loc.region}", "white")
+            self._add_output(f"  Coords:    {loc.latitude:.4f}, {loc.longitude:.4f}", "dim")
+            self._add_output(f"  Status:    {status}", status_style)
+        else:
+            # Show all servers by region
+            self._add_output("─── Server Locations ───", "cyan")
+            
+            # Group by region
+            regions: dict[str, list[tuple[str, str, bool]]] = {}
+            for server in self.servers:
+                loc = get_server_location(server.code)
+                if loc:
+                    region = loc.region
+                    if region not in regions:
+                        regions[region] = []
+                    blocked = self.server_status.get(server.code, False)
+                    regions[region].append((server.code, loc.city, blocked))
+            
+            for region in sorted(regions.keys()):
+                self._add_output(f"\n{region}:", "yellow")
+                for code, city, blocked in sorted(regions[region], key=lambda x: x[1]):
+                    icon = "●" if blocked else "○"
+                    self._add_output(f"  {icon} {code:6} {city}", "white")
+        
         return True
     
     def reset_all(self) -> bool:
@@ -615,6 +888,24 @@ class ServerPickerTUI:
             success = self.ping_servers(region)
             return True, success
         
+        elif cmd == "history":
+            server = args[0] if args else None
+            success = self.show_history(server)
+            return True, success
+        
+        elif cmd == "best":
+            success = self.show_best_servers()
+            return True, success
+        
+        elif cmd == "wine":
+            success = self.show_wine_status()
+            return True, success
+        
+        elif cmd == "geo":
+            server = args[0] if args else None
+            success = self.show_geo(server)
+            return True, success
+        
         elif cmd == "reset":
             success = self.reset_all()
             return True, success
@@ -636,6 +927,12 @@ class ServerPickerTUI:
             self._add_output("Type 'help' for available commands", "dim")
             return True, False
     
+    def _set_terminal_title(self, title: str):
+        """Set the terminal window title."""
+        # ANSI escape sequence to set window title
+        sys.stdout.write(f"\033]0;{title}\007")
+        sys.stdout.flush()
+    
     def run(self):
         """Main TUI loop."""
         # Check sudo access first with visible password prompt
@@ -656,6 +953,10 @@ class ServerPickerTUI:
             try:
                 # Reset interrupt count on successful command
                 interrupt_count = 0
+                
+                # Update terminal title with status
+                blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
+                self._set_terminal_title(f"Deadlock Server Picker - {blocked} blocked")
                 
                 # Clear screen and show static header
                 self.console.clear()

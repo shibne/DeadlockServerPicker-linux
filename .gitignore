@@ -1,4 +1,4 @@
-# Build artifacts
+\# Build artifacts
 *.egg-info/
 dist/
 build/
@@ -31,5 +31,18 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Issues
+# AUR/makepkg
+src/
+pkg/
+*.pkg.tar.zst
+*.pkg.tar.xz
+*.pkg.tar.gz
+.SRCINFO
+*.log
+
+# Personal notes
 issues.txt
+todo.txt
+AUR_PUBLISHING.md
+# User data (stored in ~/.config)
+latency_history.json
