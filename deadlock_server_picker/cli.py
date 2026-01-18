@@ -639,9 +639,9 @@ class DeadlockServerPickerCLI:
                 row_idx += 1
         
         print(f"\nUsage examples:")
-        print(f"  deadlock-server-picker allow-region na      # Allow only North America")
-        print(f"  deadlock-server-picker block-region cn      # Block China servers")
-        print(f"  deadlock-server-picker list-region eu       # List European servers")
+        print(f"  dsp allow-region na      # Allow only North America")
+        print(f"  dsp block-region cn      # Block China servers")
+        print(f"  dsp list-region eu       # List European servers")
         return 0
 
     def cmd_list_region(self, region: str, ping: bool = False) -> int:
@@ -649,7 +649,7 @@ class DeadlockServerPickerCLI:
         region_servers = get_region_servers(region)
         if not region_servers:
             print(colorize(f"Unknown region: {region}", Colors.RED))
-            print(colorize("Use 'deadlock-server-picker regions' to see available regions", Colors.DIM))
+            print(colorize("Use 'dsp regions' to see available regions", Colors.DIM))
             return 1
         
         if not self._ensure_servers_loaded():
@@ -843,18 +843,18 @@ class DeadlockServerPickerCLI:
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
     parser = argparse.ArgumentParser(
-        prog="deadlock-server-picker",
+        prog="dsp",
         description="Deadlock Server Picker for Linux - Block/unblock game server relays",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  deadlock-server-picker list                    # List all servers
-  deadlock-server-picker list --ping             # List with latency
-  deadlock-server-picker block "US East"         # Block a server
-  deadlock-server-picker unblock --all           # Unblock all
-  deadlock-server-picker block-except sgp sea    # Block all except Singapore and SEA
-  deadlock-server-picker preset create my_preset sgp hkg  # Create preset
-  deadlock-server-picker preset apply my_preset --block-others  # Apply preset
+  dsp list                    # List all servers
+  dsp list --ping             # List with latency
+  dsp block "US East"         # Block a server
+  dsp unblock --all           # Unblock all
+  dsp block-except sgp sea    # Block all except Singapore and SEA
+  dsp preset create my_preset sgp hkg  # Create preset
+  dsp preset apply my_preset --block-others  # Apply preset
         """
     )
     

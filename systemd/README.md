@@ -55,10 +55,10 @@ Before enabling the service, configure your preferred region:
 
 ```bash
 # Set your default region
-deadlock-server-picker config set default_region eu
+dsp config set default_region eu
 
 # Or add servers to always block
-deadlock-server-picker config set always_block "sgp,hkg,tyo"
+dsp config set always_block "sgp,hkg,tyo"
 ```
 
 The service will apply these rules on boot.
@@ -93,6 +93,6 @@ sudo nft list table inet deadlock_server_picker
 
 ### Manual apply/reset
 ```bash
-deadlock-server-picker apply
-deadlock-server-picker reset
+dsp apply
+dsp reset
 ```

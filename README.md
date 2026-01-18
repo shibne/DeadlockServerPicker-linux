@@ -8,15 +8,11 @@ A native Linux command-line tool to block/unblock Deadlock game server relays us
 
 - Block/unblock specific server regions
 - Built-in region presets (NA, EU, Asia, etc.)
-- Interactive TUI with color-coded status
+- Custom presets
+- Interactive TUI
 - Ping monitoring with latency display and history tracking
-- Custom preset system
 - Dry-run mode for testing
-- **nftables support** (auto-detects iptables vs nftables)
-- **Wine/Proton detection** for game process monitoring
-- **Server geolocation data** with geographic info
-- **Systemd service** for auto-start at boot
-- **Auto-apply preferences** on startup (always_block, never_block, last region)
+- nftables support (auto-detects iptables vs nftables)
 
 ## Requirements
 
@@ -47,66 +43,83 @@ pip install -e .
 
 ```bash
 # List all servers with geographic info
-deadlock-server-picker list
+dsp list
 
 # List with ping times
-deadlock-server-picker list --ping
+dsp list --ping
 
 # Block servers
-deadlock-server-picker block sgp hkg
+dsp block sgp hkg
 
 # Unblock servers
-deadlock-server-picker unblock sgp
+dsp unblock sgp
 
 # Unblock all
-deadlock-server-picker unblock --all
+dsp unblock --all
 
 # Block all except specific servers
-deadlock-server-picker block-except sgp tyo
+dsp block-except sgp tyo
 
 # Reset all firewall rules (removes the entire chain)
-deadlock-server-picker reset
+dsp reset
 ```
 
 ### Region Commands
 
 ```bash
 # List available regions
-deadlock-server-picker regions
+dsp regions
 
 # Allow only a region (block all others) - two ways:
-deadlock-server-picker allow na
-deadlock-server-picker allow-region na
+dsp allow na
+dsp allow-region na
 
 # Block a region
-deadlock-server-picker block-region cn
+dsp block-region cn
 
 # Unblock a region
-deadlock-server-picker unblock-region eu
+dsp unblock-region eu
+```
+
+### Custom Presets
+
+```bash
+# Create a preset with your favorite servers
+dsp preset create my_servers sgp hkg tyo
+
+# List saved presets
+dsp preset list
+
+# Apply a preset (unblock those servers)
+dsp preset apply my_servers
+
+# Apply preset and block all other servers
+dsp preset apply my_servers --block-others
+
+# Delete a preset
+dsp preset delete my_servers
 ```
 
 ### Interactive TUI
 
 ```bash
-deadlock-server-picker tui
+dsp tui
 ```
-
-Commands: `list`, `regions`, `block <code>`, `unblock <code>`, `allow <region>`, `ping`, `history`, `best`, `wine`, `reset`, `quit`
 
 ### Configuration
 
 ```bash
 # Show configuration
-deadlock-server-picker config show
+dsp config show
 
 # Set default region (auto-applied on startup)
-deadlock-server-picker config set default_region eu
+dsp config set default_region eu
 
 # Set servers to always block
-deadlock-server-picker config set always_block "sgp,hkg"
+dsp config set always_block "sgp,hkg"
 
 # Choose firewall backend
-deadlock-server-picker config set firewall_backend nftables
+dsp config set firewall_backend nftables
 ```
 
 ### Systemd Service (Auto-start)

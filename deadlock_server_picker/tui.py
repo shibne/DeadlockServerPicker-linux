@@ -399,9 +399,12 @@ class ServerPickerTUI:
             ("regions", "Show available region presets"),
             ("block <code>", "Block a server by code"),
             ("unblock <code>", "Unblock a server by code"),
-            ("allow <region>", "Allow only servers in region"),
+            ("allow <region|preset>", "Allow only servers in region or preset"),
             ("block-region <region>", "Block all servers in region"),
             ("unblock-region <region>", "Unblock all servers in region"),
+            ("preset", "List custom presets"),
+            ("preset create <name>", "Save unblocked servers as preset"),
+            ("preset delete <name>", "Delete a custom preset"),
             ("ping [region]", "Ping servers and show latency"),
             ("history [server]", "Show latency history"),
             ("best", "Show servers with best latency"),
@@ -545,11 +548,17 @@ class ServerPickerTUI:
         return True
     
     def allow_only_region(self, region: str) -> bool:
-        """Block all servers except those in the specified region. Returns True if successful."""
+        """Block all servers except those in the specified region or preset. Returns True if successful."""
+        # First check if it's a user preset
+        preset = self.preset_manager.get_preset(region)
+        if preset:
+            return self._apply_preset_allow(preset)
+        
+        # Then check built-in regions
         region_servers = get_region_servers(region)
         if not region_servers:
-            self._add_output(f"Unknown region: {region}", "red")
-            self._add_output("Use 'regions' to see available regions", "dim")
+            self._add_output(f"Unknown region or preset: {region}", "red")
+            self._add_output("Use 'regions' or 'preset list' to see options", "dim")
             return False
         
         config = self.config_manager.load()
@@ -577,6 +586,34 @@ class ServerPickerTUI:
         
         blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
         self._add_output(f"✓ Done! {blocked} servers blocked, region preference saved", "green")
+        return True
+    
+    def _apply_preset_allow(self, preset) -> bool:
+        """Apply a preset by allowing only its servers."""
+        config = self.config_manager.load()
+        preset_servers = preset.servers
+        
+        to_block = [s for s in self.servers if s.code not in preset_servers
+                   and s.code not in config.never_block]
+        to_unblock = [s for s in self.servers if s.code in preset_servers
+                     and s.code not in config.always_block]
+        
+        self._add_output(f"Applying preset '{preset.name}' ({len(to_unblock)} servers)", "cyan")
+        
+        # First unblock preset servers
+        if to_unblock:
+            self.firewall.unblock_servers(to_unblock)
+            for server in to_unblock:
+                self.server_status[server.code] = False
+        
+        # Then block others
+        if to_block:
+            self.firewall.block_servers(to_block)
+            for server in to_block:
+                self.server_status[server.code] = True
+        
+        blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
+        self._add_output(f"✓ Done! {blocked} servers blocked", "green")
         return True
     
     def block_region(self, region: str) -> bool:
@@ -611,6 +648,71 @@ class ServerPickerTUI:
         self._add_output(f"✓ Unblocked {len(to_unblock)} servers in {region.upper()}", "green")
         return True
     
+    def preset_list(self) -> bool:
+        """List all saved presets. Returns True."""
+        self._clear_output()
+        presets = self.preset_manager.list_presets()
+        
+        if not presets:
+            self._add_output("No custom presets saved", "yellow")
+            self._add_output("Use 'preset create <name>' to create one", "dim")
+            return True
+        
+        self._add_output("─── Custom Presets ───", "cyan")
+        
+        alt_colors = ["cyan", "magenta"]
+        for i, preset in enumerate(presets):
+            row_color = alt_colors[i % 2]
+            server_list = ", ".join(preset.servers[:5])
+            if len(preset.servers) > 5:
+                server_list += f" +{len(preset.servers) - 5} more"
+            self._add_output(f"  {preset.name}: {server_list}", row_color)
+        
+        self._add_output("", "white")
+        self._add_output("Use 'allow <preset_name>' to apply a preset", "dim")
+        return True
+    
+    def preset_create(self, name: str) -> bool:
+        """Create a preset from currently unblocked servers. Returns True if successful."""
+        # Check if name conflicts with built-in regions
+        if get_region_servers(name):
+            self._add_output(f"Cannot use '{name}' - conflicts with built-in region", "red")
+            return False
+        
+        # Get currently unblocked servers
+        unblocked = [s.code for s in self.servers if not self.server_status.get(s.code, False)]
+        
+        if not unblocked:
+            self._add_output("No servers are currently unblocked", "red")
+            self._add_output("Unblock some servers first, then create a preset", "dim")
+            return False
+        
+        try:
+            preset = self.preset_manager.add_preset(name, unblocked)
+            self._add_output(f"✓ Created preset '{preset.name}' with {len(unblocked)} servers", "green")
+            servers_preview = ", ".join(unblocked[:5])
+            if len(unblocked) > 5:
+                servers_preview += f" +{len(unblocked) - 5} more"
+            self._add_output(f"  Servers: {servers_preview}", "dim")
+            return True
+        except Exception as e:
+            self._add_output(f"Error creating preset: {e}", "red")
+            return False
+    
+    def preset_delete(self, name: str) -> bool:
+        """Delete a user preset. Returns True if successful."""
+        # Check if it's a built-in region (cannot delete)
+        if get_region_servers(name):
+            self._add_output(f"Cannot delete '{name}' - it's a built-in region", "red")
+            return False
+        
+        if self.preset_manager.delete_preset(name):
+            self._add_output(f"✓ Deleted preset '{name}'", "green")
+            return True
+        else:
+            self._add_output(f"Preset '{name}' not found", "red")
+            return False
+
     def ping_servers(self, region: Optional[str] = None) -> bool:
         """Ping all servers in parallel and display results. Returns True."""
         if region:
@@ -626,14 +728,38 @@ class ServerPickerTUI:
         timeout = getattr(self.ping_service, 'timeout', 2.0)
         
         self._clear_output()
-        self._add_output(f"Pinging {total} servers in parallel (timeout: {timeout}s)...", "cyan")
+        self._add_output(f"─── Pinging {total} servers (timeout: {timeout}s) ───", "cyan")
         
-        # Use concurrent ping for speed
-        results = self.ping_service.ping_servers(servers_to_ping)
+        # Animation frames
+        spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        completed = 0
+        results = {}
         
-        # Handle None result (e.g., from mocks in tests)
-        if results is None:
-            results = {}
+        # Ping servers one by one with animation
+        for i, server in enumerate(servers_to_ping):
+            frame = spinner[i % len(spinner)]
+            progress = f"[{i+1}/{total}]"
+            # Update progress line
+            self._add_output(f"  {frame} {progress} Pinging {server.code}...", "cyan")
+            
+            # Ping single server
+            single_result = self.ping_service.ping_servers([server])
+            if single_result:
+                results.update(single_result)
+            
+            # Remove progress line and show result
+            self.output_lines.pop()
+            latency = results.get(server.code)
+            if latency is not None and isinstance(latency, (int, float)):
+                if latency < 50:
+                    style = "green"
+                elif latency < 100:
+                    style = "yellow"
+                else:
+                    style = "red"
+                self._add_output(f"  ✓ {progress} {server.code:8} {latency:.0f}ms", style)
+            else:
+                self._add_output(f"  ✗ {progress} {server.code:8} TIMEOUT", "red")
         
         # Save to history
         self.latency_history.record_batch({
@@ -641,39 +767,16 @@ class ServerPickerTUI:
             for code, lat in results.items()
         })
         
-        # Store and display results
+        # Store results and count
         success_count = 0
         fail_count = 0
-        
-        # Sort by latency (successes first, then timeouts)
-        sorted_servers = sorted(
-            servers_to_ping,
-            key=lambda s: (results.get(s.code) is None, results.get(s.code) or 9999)
-        )
-        
-        for server in sorted_servers:
+        for server in servers_to_ping:
             latency = results.get(server.code)
             self.ping_results[server.code] = latency
-            
-            # Get history summary for this server
-            hist = self.latency_history.get_summary(server.code)
-            hist_str = ""
-            if hist and hist['avg_latency']:
-                hist_str = f" (avg: {hist['avg_latency']:.0f}ms)"
-            
-            # Check if latency is a valid number (handles Mock objects in tests)
             if latency is not None and isinstance(latency, (int, float)):
                 success_count += 1
-                if latency < 50:
-                    style = "green"
-                elif latency < 100:
-                    style = "yellow"
-                else:
-                    style = "red"
-                self._add_output(f"  {server.code:8} {latency:.0f}ms{hist_str}", style)
             else:
                 fail_count += 1
-                self._add_output(f"  {server.code:8} TIMEOUT{hist_str}", "red")
         
         # Summary
         self._add_output(f"─── {success_count} successful, {fail_count} failed ───", "dim")
@@ -853,6 +956,7 @@ class ServerPickerTUI:
                 regions["Unknown"].append((server.code, display, blocked, ping))
         
         # Display each region in compact multi-column format
+        alt_colors = ["cyan", "magenta"]
         for region in sorted(regions.keys()):
             self._add_output(f"{region}:", "yellow")
             
@@ -864,9 +968,9 @@ class ServerPickerTUI:
                     entry = f"{icon} {code:6} {city[:12]:12} {ping:>4.0f}ms"
                 else:
                     entry = f"{icon} {code:6} {city[:12]:12}      "
-                entries.append(entry)
+                entries.append((entry, blocked))
             
-            # Display in 3 columns
+            # Display in 3 columns with alternating colors
             cols = 3
             col_width = 28
             rows = (len(entries) + cols - 1) // cols
@@ -876,10 +980,11 @@ class ServerPickerTUI:
                 for col in range(cols):
                     idx = row + col * rows
                     if idx < len(entries):
-                        line_parts.append(entries[idx])
+                        line_parts.append(entries[idx][0])
                 
                 line = "  ".join(f"{p:<{col_width}}" for p in line_parts)
-                self._add_output(f"  {line}", "white")
+                row_color = alt_colors[row % 2]
+                self._add_output(f"  {line}", row_color)
         
         self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
@@ -1011,7 +1116,28 @@ class ServerPickerTUI:
             success = self.show_wine_status()
             return True, success
         
-
+        elif cmd == "preset":
+            if not args:
+                success = self.preset_list()
+                return True, success
+            subcmd = args[0].lower()
+            if subcmd == "list":
+                success = self.preset_list()
+            elif subcmd == "create":
+                if len(args) < 2:
+                    self._add_output("Usage: preset create <name>", "red")
+                    return True, False
+                success = self.preset_create(args[1])
+            elif subcmd == "delete":
+                if len(args) < 2:
+                    self._add_output("Usage: preset delete <name>", "red")
+                    return True, False
+                success = self.preset_delete(args[1])
+            else:
+                self._add_output(f"Unknown preset command: {subcmd}", "red")
+                self._add_output("Usage: preset [list|create <name>|delete <name>]", "dim")
+                return True, False
+            return True, success
         
         elif cmd == "reset":
             success = self.reset_all()
