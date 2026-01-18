@@ -714,7 +714,7 @@ class ServerPickerTUI:
             return False
 
     def ping_servers(self, region: Optional[str] = None) -> bool:
-        """Ping all servers in parallel and display results. Returns True."""
+        """Ping all servers concurrently and display results. Returns True."""
         if region:
             region_servers = get_region_servers(region)
             if not region_servers:
@@ -729,37 +729,18 @@ class ServerPickerTUI:
         
         self._clear_output()
         self._add_output(f"─── Pinging {total} servers (timeout: {timeout}s) ───", "cyan")
+        self._add_output(f"  ⏳ Please wait...", "dim")
         
-        # Animation frames
-        spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        completed = 0
-        results = {}
+        # Use concurrent ping for speed
+        results = self.ping_service.ping_servers(servers_to_ping)
         
-        # Ping servers one by one with animation
-        for i, server in enumerate(servers_to_ping):
-            frame = spinner[i % len(spinner)]
-            progress = f"[{i+1}/{total}]"
-            # Update progress line
-            self._add_output(f"  {frame} {progress} Pinging {server.code}...", "cyan")
-            
-            # Ping single server
-            single_result = self.ping_service.ping_servers([server])
-            if single_result:
-                results.update(single_result)
-            
-            # Remove progress line and show result
+        # Handle None result (e.g., from mocks in tests)
+        if results is None:
+            results = {}
+        
+        # Remove "Please wait" message
+        if self.output_lines:
             self.output_lines.pop()
-            latency = results.get(server.code)
-            if latency is not None and isinstance(latency, (int, float)):
-                if latency < 50:
-                    style = "green"
-                elif latency < 100:
-                    style = "yellow"
-                else:
-                    style = "red"
-                self._add_output(f"  ✓ {progress} {server.code:8} {latency:.0f}ms", style)
-            else:
-                self._add_output(f"  ✗ {progress} {server.code:8} TIMEOUT", "red")
         
         # Save to history
         self.latency_history.record_batch({
@@ -767,16 +748,39 @@ class ServerPickerTUI:
             for code, lat in results.items()
         })
         
-        # Store results and count
+        # Sort by latency (successes first, then timeouts)
+        sorted_servers = sorted(
+            servers_to_ping,
+            key=lambda s: (results.get(s.code) is None, results.get(s.code) or 9999)
+        )
+        
+        # Store and display results
         success_count = 0
         fail_count = 0
-        for server in servers_to_ping:
+        
+        for server in sorted_servers:
             latency = results.get(server.code)
             self.ping_results[server.code] = latency
+            
+            # Get history summary for this server
+            hist = self.latency_history.get_summary(server.code)
+            hist_str = ""
+            if hist and hist.get('avg_latency'):
+                hist_str = f" (avg: {hist['avg_latency']:.0f}ms)"
+            
+            # Check if latency is a valid number (handles Mock objects in tests)
             if latency is not None and isinstance(latency, (int, float)):
                 success_count += 1
+                if latency < 50:
+                    style = "green"
+                elif latency < 100:
+                    style = "yellow"
+                else:
+                    style = "red"
+                self._add_output(f"  ✓ {server.code:8} {latency:.0f}ms{hist_str}", style)
             else:
                 fail_count += 1
+                self._add_output(f"  ✗ {server.code:8} TIMEOUT{hist_str}", "red")
         
         # Summary
         self._add_output(f"─── {success_count} successful, {fail_count} failed ───", "dim")
