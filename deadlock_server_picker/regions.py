@@ -5,11 +5,27 @@ Regional server presets for Deadlock Server Picker.
 # Server codes grouped by region
 REGION_PRESETS = {
     "North America": {
-        "description": "US and Canada servers",
+        "description": "All US and Canada servers",
         "servers": [
             "iad",    # Sterling, Virginia (US East)
             "ord",    # Chicago, Illinois
             "atl",    # Atlanta, Georgia
+            "dfw",    # Dallas, Texas
+            "lax",    # Los Angeles, California
+            "sea",    # Seattle, Washington
+        ]
+    },
+    "North America East": {
+        "description": "US East Coast servers",
+        "servers": [
+            "iad",    # Sterling, Virginia
+            "ord",    # Chicago, Illinois
+            "atl",    # Atlanta, Georgia
+        ]
+    },
+    "North America West": {
+        "description": "US West Coast servers",
+        "servers": [
             "dfw",    # Dallas, Texas
             "lax",    # Los Angeles, California
             "sea",    # Seattle, Washington
@@ -147,6 +163,10 @@ REGION_PRESETS = {
 # Short aliases for regions
 REGION_ALIASES = {
     "na": "North America",
+    "nae": "North America East",
+    "naeast": "North America East",
+    "naw": "North America West",
+    "nawest": "North America West",
     "sa": "South America",
     "eu": "Europe",
     "euw": "Europe West",

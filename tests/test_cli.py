@@ -289,8 +289,9 @@ class TestMainFunction:
         """Test main with list command."""
         with patch("sys.argv", ["deadlock-server-picker", "--dry-run", "list"]):
             with patch("shutil.which", return_value="/sbin/iptables"):
-                with patch.object(DeadlockServerPickerCLI, "cmd_list", return_value=0) as mock_list:
-                    result = main()
+                with patch("deadlock_server_picker.cli.check_disclaimer", return_value=True):
+                    with patch.object(DeadlockServerPickerCLI, "cmd_list", return_value=0) as mock_list:
+                        result = main()
         
         assert result == 0
 
@@ -298,8 +299,9 @@ class TestMainFunction:
         """Test main handles keyboard interrupt."""
         with patch("sys.argv", ["deadlock-server-picker", "list"]):
             with patch("shutil.which", return_value="/sbin/iptables"):
-                with patch.object(DeadlockServerPickerCLI, "_ensure_servers_loaded", side_effect=KeyboardInterrupt):
-                    result = main()
+                with patch("deadlock_server_picker.cli.check_disclaimer", return_value=True):
+                    with patch.object(DeadlockServerPickerCLI, "_ensure_servers_loaded", side_effect=KeyboardInterrupt):
+                        result = main()
         
         assert result == 130
 
@@ -307,7 +309,8 @@ class TestMainFunction:
         """Test main handles unexpected errors."""
         with patch("sys.argv", ["deadlock-server-picker", "list"]):
             with patch("shutil.which", return_value="/sbin/iptables"):
-                with patch.object(DeadlockServerPickerCLI, "_ensure_servers_loaded", side_effect=RuntimeError("Test error")):
-                    result = main()
+                with patch("deadlock_server_picker.cli.check_disclaimer", return_value=True):
+                    with patch.object(DeadlockServerPickerCLI, "_ensure_servers_loaded", side_effect=RuntimeError("Test error")):
+                        result = main()
         
         assert result == 1

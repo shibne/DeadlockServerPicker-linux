@@ -24,7 +24,9 @@ class Colors:
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
     BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
     CYAN = "\033[96m"
+    WHITE = "\033[97m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
 
@@ -107,11 +109,15 @@ class DeadlockServerPickerCLI:
         print(colorize(header, Colors.BOLD))
         print("-" * len(header))
 
+        # Alternating row colors (pastel cyan and magenta)
+        alt_colors = [Colors.CYAN, Colors.MAGENTA]
+        
         # Rows
-        for server in sorted(servers, key=lambda s: (s.status.value, s.latency_ms or 9999)):
+        for i, server in enumerate(sorted(servers, key=lambda s: (s.status.value, s.latency_ms or 9999))):
             name = server.display_name[:max_name]
+            row_color = alt_colors[i % 2]
             
-            # Status with color
+            # Status with color (override row color for status)
             status = server.status.value
             if server.status == ServerStatus.BLOCKED:
                 status_str = colorize(f"{status:<12}", Colors.RED)
@@ -122,7 +128,7 @@ class DeadlockServerPickerCLI:
             else:
                 status_str = f"{status:<12}"
 
-            row = f"{name:<{max_name}}  {status_str}"
+            row = f"{colorize(f'{name:<{max_name}}', row_color)}  {status_str}"
             
             if show_latency:
                 if server.latency_ms is not None:
@@ -137,7 +143,7 @@ class DeadlockServerPickerCLI:
                     latency_str = colorize(f"{'N/A':<12}", Colors.DIM)
                 row += f"  {latency_str}"
                 
-            row += f"  {len(server.ip_addresses):<5}"
+            row += f"  {colorize(str(len(server.ip_addresses)), row_color):<5}"
             print(row)
 
     def cmd_list(self, ping: bool = False, blocked_only: bool = False) -> int:
@@ -616,14 +622,21 @@ class DeadlockServerPickerCLI:
         print(colorize("Available Region Presets:", Colors.BOLD))
         print("-" * 60)
         
+        # Alternating colors for rows (pastel cyan and magenta)
+        alt_colors = [Colors.CYAN, Colors.MAGENTA]
+        row_idx = 0
+        
         shown_regions = set()
         for alias, region_name in sorted(REGION_ALIASES.items()):
             if region_name not in shown_regions:
                 shown_regions.add(region_name)
                 region_data = REGION_PRESETS[region_name]
+                row_color = alt_colors[row_idx % 2]
                 alias_str = colorize(f"{alias:<6}", Colors.YELLOW)
-                region_str = colorize(f"{region_name:<20}", Colors.CYAN)
-                print(f"  {alias_str} {region_str} {region_data['description']} ({len(region_data['servers'])} servers)")
+                region_str = colorize(f"{region_name:<20}", row_color)
+                desc_str = colorize(f"{region_data['description']} ({len(region_data['servers'])} servers)", row_color)
+                print(f"  {alias_str} {region_str} {desc_str}")
+                row_idx += 1
         
         print(f"\nUsage examples:")
         print(f"  deadlock-server-picker allow-region na      # Allow only North America")
@@ -956,6 +969,56 @@ Examples:
     return parser
 
 
+def check_disclaimer() -> bool:
+    """
+    Check if user has accepted the disclaimer. Prompts if not.
+    
+    Returns:
+        True if accepted (now or previously), False if declined.
+    """
+    from .config import ConfigManager
+    
+    config_manager = ConfigManager()
+    config = config_manager.load()
+    
+    if config.disclaimer_accepted:
+        return True
+    
+    # Show disclaimer
+    disclaimer = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              ⚠️  DISCLAIMER  ⚠️                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  This project was vibecoded with AI assistance.                              ║
+║                                                                              ║
+║  While functional, USE AT YOUR OWN RISK.                                     ║
+║                                                                              ║
+║  I am not responsible for any issues, damages, or consequences that may      ║
+║  arise from using this software. This includes but is not limited to:        ║
+║  - System instability                                                        ║
+║  - Network issues                                                            ║
+║  - Any other problems that may occur                                         ║
+║                                                                              ║
+║  By continuing, you accept full responsibility for any outcomes.             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+    print(colorize(disclaimer, Colors.YELLOW))
+    
+    try:
+        response = input(colorize("Do you accept and wish to continue? [y/N]: ", Colors.CYAN))
+        if response.strip().lower() in ('y', 'yes'):
+            config.disclaimer_accepted = True
+            config_manager.save(config)
+            print(colorize("\n✓ Disclaimer accepted. This won't be shown again.\n", Colors.GREEN))
+            return True
+        else:
+            print(colorize("\nDisclaimer not accepted. Exiting.", Colors.RED))
+            return False
+    except (KeyboardInterrupt, EOFError):
+        print(colorize("\n\nDisclaimer not accepted. Exiting.", Colors.RED))
+        return False
+
+
 def main() -> int:
     """Main entry point."""
     parser = create_parser()
@@ -964,6 +1027,10 @@ def main() -> int:
     if not args.command:
         parser.print_help()
         return 0
+    
+    # Check disclaimer before proceeding (except for help/version)
+    if not check_disclaimer():
+        return 1
 
     # Create CLI instance
     cli = DeadlockServerPickerCLI(

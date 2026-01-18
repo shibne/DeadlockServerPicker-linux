@@ -1,5 +1,7 @@
 # Deadlock Server Picker for Linux
 
+> **DISCLAIMER**: This project was vibecoded with AI assistance. While functional, use it at your own risk. I'm not responsible for any issues that may arise from using this software.
+
 A native Linux command-line tool to block/unblock Deadlock game server relays using iptables or nftables.
 
 ## Features
@@ -24,6 +26,14 @@ A native Linux command-line tool to block/unblock Deadlock game server relays us
 - Root/sudo access
 
 ## Installation
+
+### From AUR (Arch Linux)
+
+```bash
+yay -S deadlock-server-picker
+```
+
+### From Source
 
 ```bash
 git clone https://github.com/shibne/DeadlockServerPicker-linux.git

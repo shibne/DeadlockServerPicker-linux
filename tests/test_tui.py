@@ -590,8 +590,9 @@ class TestCreateRegionTable:
 class TestRunTui:
     """Tests for run_tui function."""
     
+    @patch('deadlock_server_picker.tui.check_disclaimer_tui', return_value=True)
     @patch('deadlock_server_picker.tui.ServerPickerTUI')
-    def test_run_tui_dry_run(self, mock_tui_class):
+    def test_run_tui_dry_run(self, mock_tui_class, mock_disclaimer):
         """Should create TUI with dry_run flag."""
         mock_tui = Mock()
         mock_tui_class.return_value = mock_tui
@@ -601,8 +602,9 @@ class TestRunTui:
         mock_tui_class.assert_called_once_with(dry_run=True)
         mock_tui.run.assert_called_once()
     
+    @patch('deadlock_server_picker.tui.check_disclaimer_tui', return_value=True)
     @patch('deadlock_server_picker.tui.ServerPickerTUI')
-    def test_run_tui_default(self, mock_tui_class):
+    def test_run_tui_default(self, mock_tui_class, mock_disclaimer):
         """Should create TUI without dry_run flag by default."""
         mock_tui = Mock()
         mock_tui_class.return_value = mock_tui

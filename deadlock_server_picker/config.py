@@ -12,6 +12,9 @@ from typing import Optional
 class Config:
     """Configuration settings."""
     
+    # Whether user has accepted the disclaimer
+    disclaimer_accepted: bool = False
+    
     # Default region to use for allow-region command
     default_region: Optional[str] = None
     

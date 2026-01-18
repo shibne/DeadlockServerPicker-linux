@@ -44,5 +44,13 @@ pkg/
 issues.txt
 todo.txt
 AUR_PUBLISHING.md
+
 # User data (stored in ~/.config)
 latency_history.json
+
+# Misc
+*.bak
+*.tmp
+*~
+.mypy_cache/
+.ruff_cache/

@@ -6,6 +6,8 @@ Interactive terminal interface with color-coded server status.
 import os
 import subprocess
 import sys
+import threading
+import time
 from typing import Optional
 
 from rich.console import Console, Group
@@ -57,6 +59,36 @@ class ServerPickerTUI:
         self.ping_results: dict[str, Optional[float]] = {}  # code -> latency
         self.output_lines: list[Text] = []  # Dynamic output buffer
         self.max_output_lines = 50  # Max lines to keep in output buffer
+        
+        # Sudo refresh thread
+        self._sudo_refresh_thread: Optional[threading.Thread] = None
+        self._sudo_refresh_stop = threading.Event()
+    
+    def _start_sudo_refresh(self):
+        """Start background thread to keep sudo credentials alive."""
+        if self.dry_run:
+            return
+        
+        def refresh_loop():
+            while not self._sudo_refresh_stop.wait(timeout=60):  # Refresh every 60 seconds
+                try:
+                    subprocess.run(
+                        ["sudo", "-v"],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except Exception:
+                    pass
+        
+        self._sudo_refresh_thread = threading.Thread(target=refresh_loop, daemon=True)
+        self._sudo_refresh_thread.start()
+    
+    def _stop_sudo_refresh(self):
+        """Stop the sudo refresh thread."""
+        if self._sudo_refresh_thread is not None:
+            self._sudo_refresh_stop.set()
+            self._sudo_refresh_thread.join(timeout=1)
     
     def _check_sudo_access(self) -> bool:
         """
@@ -310,6 +342,14 @@ class ServerPickerTUI:
         if len(self.output_lines) > self.max_output_lines:
             self.output_lines = self.output_lines[-self.max_output_lines:]
     
+    def _add_output_markup(self, markup: str):
+        """Add a line with Rich markup to the output buffer."""
+        line = Text.from_markup(markup)
+        self.output_lines.append(line)
+        # Trim to max lines
+        if len(self.output_lines) > self.max_output_lines:
+            self.output_lines = self.output_lines[-self.max_output_lines:]
+    
     def _clear_output(self):
         """Clear the output buffer."""
         self.output_lines = []
@@ -373,8 +413,11 @@ class ServerPickerTUI:
             ("quit", "Exit"),
         ]
         
-        for cmd, desc in help_lines:
-            self._add_output(f"  {cmd:25} {desc}", "yellow")
+        # Alternating colors (pastel cyan and magenta)
+        alt_colors = ["cyan", "magenta"]
+        for i, (cmd, desc) in enumerate(help_lines):
+            row_color = alt_colors[i % 2]
+            self._add_output(f"  {cmd:25} {desc}", row_color)
     
     def show_servers(self, filter_region: Optional[str] = None) -> bool:
         """Display server list. Returns True if successful."""
@@ -398,9 +441,9 @@ class ServerPickerTUI:
         self._clear_output()
         self._add_output(f"─── {title} ({len(filtered)}) ───", "cyan")
         
-        # Build compact server entries
+        # Build compact server entries with index for alternating colors
         entries = []
-        for server in filtered:
+        for i, server in enumerate(filtered):
             blocked = self.server_status.get(server.code, False)
             ping = self.ping_results.get(server.code)
             
@@ -416,25 +459,28 @@ class ServerPickerTUI:
                 entry = f"{status_icon} {server.code:6} {ping_str:>5}"
             else:
                 entry = f"{status_icon} {server.code:6}      "
-            entries.append((entry, blocked))
+            entries.append((entry, blocked, i))
         
-        # Display in 4 columns
+        # Display in 4 columns with alternating colors per row
         cols = 4
         col_width = 18
         rows = (len(entries) + cols - 1) // cols
+        alt_colors = ["cyan", "magenta"]
         
         for row in range(rows):
             line_parts = []
             for col in range(cols):
                 idx = row + col * rows
                 if idx < len(entries):
-                    entry, blocked = entries[idx]
-                    line_parts.append(entry)
+                    entry, blocked, entry_idx = entries[idx]
+                    line_parts.append(f"{entry:<{col_width}}")
+                else:
+                    line_parts.append(" " * col_width)
             
-            # Determine color based on if any in row are blocked
-            line = "  ".join(f"{p:<{col_width}}" for p in line_parts)
-            # Use mixed coloring - just use white for the line, icons show status
-            self._add_output(line, "white")
+            # Alternating row colors
+            line = "  ".join(line_parts)
+            row_color = alt_colors[row % 2]
+            self._add_output(line, row_color)
         
         self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
@@ -444,13 +490,19 @@ class ServerPickerTUI:
         self._clear_output()
         self._add_output("─── Available Regions ───", "magenta")
         
+        # Alternating colors (pastel cyan and magenta)
+        alt_colors = ["cyan", "magenta"]
+        row_idx = 0
+        
         shown_regions = set()
         for alias, region_name in sorted(REGION_ALIASES.items()):
             if region_name not in shown_regions:
                 shown_regions.add(region_name)
                 region_data = REGION_PRESETS[region_name]
                 server_count = len(region_data["servers"])
-                self._add_output(f"  {alias:6} {region_name:15} ({server_count} servers) - {region_data['description']}", "yellow")
+                row_color = alt_colors[row_idx % 2]
+                self._add_output(f"  {alias:6} {region_name:20} ({server_count} servers) - {region_data['description']}", row_color)
+                row_idx += 1
         
         return True
     
@@ -996,6 +1048,9 @@ class ServerPickerTUI:
             self.console.print("[dim]Run with --dry-run to test without firewall changes.[/]")
             return
         
+        # Start background sudo refresh to keep credentials alive
+        self._start_sudo_refresh()
+        
         # Now initialize
         self.initialize()
         
@@ -1044,6 +1099,9 @@ class ServerPickerTUI:
     
     def _cleanup_on_exit(self):
         """Reset firewall rules when exiting."""
+        # Stop sudo refresh thread
+        self._stop_sudo_refresh()
+        
         blocked_count = sum(1 for s in self.servers if self.server_status.get(s.code, False))
         
         if blocked_count > 0 and not self.dry_run:
@@ -1056,8 +1114,63 @@ class ServerPickerTUI:
                 self.console.print("[dim]Run 'deadlock-server-picker reset' manually to clean up[/]")
 
 
+def check_disclaimer_tui(console: Console) -> bool:
+    """
+    Check if user has accepted the disclaimer. Prompts if not.
+    
+    Args:
+        console: Rich Console instance for output.
+        
+    Returns:
+        True if accepted (now or previously), False if declined.
+    """
+    config_manager = ConfigManager()
+    config = config_manager.load()
+    
+    if config.disclaimer_accepted:
+        return True
+    
+    # Show disclaimer
+    disclaimer_text = """
+[bold yellow]⚠️  DISCLAIMER  ⚠️[/bold yellow]
+
+This project was [bold]vibecoded[/bold] with AI assistance.
+
+While functional, [bold red]USE AT YOUR OWN RISK.[/bold red]
+
+I am not responsible for any issues, damages, or consequences that may
+arise from using this software. This includes but is not limited to:
+  • System instability
+  • Network issues  
+  • Any other problems that may occur
+
+By continuing, you accept full responsibility for any outcomes.
+"""
+    
+    console.print(Panel(disclaimer_text, title="[bold]Disclaimer[/bold]", border_style="yellow"))
+    
+    try:
+        response = console.input("[bold cyan]Do you accept and wish to continue? [y/N]: [/]")
+        if response.strip().lower() in ('y', 'yes'):
+            config.disclaimer_accepted = True
+            config_manager.save(config)
+            console.print("\n[green]✓ Disclaimer accepted. This won't be shown again.[/]\n")
+            return True
+        else:
+            console.print("\n[red]Disclaimer not accepted. Exiting.[/]")
+            return False
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n\n[red]Disclaimer not accepted. Exiting.[/]")
+        return False
+
+
 def run_tui(dry_run: bool = False):
     """Entry point for TUI."""
+    # Check disclaimer before creating TUI
+    console = Console()
+    if not check_disclaimer_tui(console):
+        return
+    
     tui = ServerPickerTUI(dry_run=dry_run)
     tui.run()
 
