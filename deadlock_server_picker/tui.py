@@ -18,6 +18,7 @@ from rich.box import ROUNDED
 from rich.layout import Layout
 from rich.live import Live
 from rich.columns import Columns
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from .models import Server, ServerStatus
 from .server_fetcher import ServerDataFetcher
@@ -391,8 +392,11 @@ class ServerPickerTUI:
     
     def _show_help(self):
         """Show help commands in output panel."""
+        from . import __version__
+        
         self._clear_output()
-        self._add_output("─── Available Commands ───", "green")
+        self._add_output(f"─── Deadlock Server Picker v{__version__} ───", "green")
+        self._add_output("", "white")
         
         help_lines = [
             ("list [region|server]", "Show servers by location (filter by region/server)"),
@@ -714,7 +718,7 @@ class ServerPickerTUI:
             return False
 
     def ping_servers(self, region: Optional[str] = None) -> bool:
-        """Ping all servers concurrently and display results. Returns True."""
+        """Ping all servers with live progress display. Returns True."""
         if region:
             region_servers = get_region_servers(region)
             if not region_servers:
@@ -728,19 +732,34 @@ class ServerPickerTUI:
         timeout = getattr(self.ping_service, 'timeout', 2.0)
         
         self._clear_output()
-        self._add_output(f"─── Pinging {total} servers (timeout: {timeout}s) ───", "cyan")
-        self._add_output(f"  ⏳ Please wait...", "dim")
+        results = {}
         
-        # Use concurrent ping for speed
-        results = self.ping_service.ping_servers(servers_to_ping)
+        # Use Rich Progress for live display
+        self.console.clear()
+        self.console.print(self._create_static_header())
+        self.console.print()
+        self.console.print(f"[cyan]─── Pinging {total} servers (timeout: {timeout}s) ───[/]")
         
-        # Handle None result (e.g., from mocks in tests)
-        if results is None:
-            results = {}
-        
-        # Remove "Please wait" message
-        if self.output_lines:
-            self.output_lines.pop()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=self.console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(f"[cyan]Pinging servers...", total=total)
+            
+            # Ping servers one at a time for live progress
+            for i, server in enumerate(servers_to_ping):
+                progress.update(task, description=f"[cyan]Pinging {server.code}...")
+                
+                # Ping single server
+                single_result = self.ping_service.ping_servers([server])
+                if single_result:
+                    results.update(single_result)
+                
+                progress.advance(task)
         
         # Save to history
         self.latency_history.record_batch({

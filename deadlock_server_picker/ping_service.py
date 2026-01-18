@@ -63,8 +63,13 @@ def ping_host(host: str, timeout: float = 2.0) -> Optional[float]:
     Returns:
         Round-trip time in milliseconds, or None if ping failed.
     """
+    # Try subprocess ping first (most reliable, works without raw socket perms)
+    result = subprocess_ping(host, timeout)
+    if result is not None:
+        return result
+    
+    # Try raw ICMP ping (requires root/sudo)
     try:
-        # Try ICMP ping first (requires root)
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
         sock.settimeout(timeout)
         
@@ -91,17 +96,59 @@ def ping_host(host: str, timeout: float = 2.0) -> Optional[float]:
                 return elapsed
                 
     except PermissionError:
-        # Fall back to TCP ping on common game ports
-        return tcp_ping(host, timeout)
+        pass
     except socket.error:
-        return None
+        pass
     except Exception:
-        return None
+        pass
     finally:
         try:
             sock.close()
         except Exception:
             pass
+    
+    # Fall back to TCP ping
+    result = tcp_ping(host, timeout)
+    if result is not None:
+        return result
+    
+    return None
+
+
+def subprocess_ping(host: str, timeout: float = 2.0) -> Optional[float]:
+    """
+    Ping using system ping command (most reliable).
+    
+    Args:
+        host: IP address or hostname to ping.
+        timeout: Timeout in seconds.
+        
+    Returns:
+        Round-trip time in milliseconds, or None if ping failed.
+    """
+    import subprocess
+    import re
+    
+    try:
+        # Use system ping command with count=1
+        result = subprocess.run(
+            ['ping', '-c', '1', '-W', str(int(timeout)), host],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1
+        )
+        
+        if result.returncode == 0:
+            # Parse time from output like "time=12.3 ms"
+            match = re.search(r'time[=<](\d+\.?\d*)\s*ms', result.stdout)
+            if match:
+                return float(match.group(1))
+    except subprocess.TimeoutExpired:
+        pass
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
     
     return None
 
