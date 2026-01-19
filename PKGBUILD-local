@@ -1,7 +1,7 @@
 # Maintainer: cihan shibne123@gmail.com
 # Local build PKGBUILD - builds from current directory
 pkgname=deadlock-server-picker
-pkgver=1.4
+pkgver=1.4.1
 pkgrel=1
 pkgdesc="A native Linux tool to block/unblock Deadlock game server relays using iptables"
 arch=('any')

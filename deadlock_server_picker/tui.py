@@ -1082,6 +1082,8 @@ class ServerPickerTUI:
                 self._add_output("Usage: block <server_code>", "red")
                 return True, False
             success = self.block_server(args[0])
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd == "unblock":
@@ -1089,6 +1091,8 @@ class ServerPickerTUI:
                 self._add_output("Usage: unblock <server_code>", "red")
                 return True, False
             success = self.unblock_server(args[0])
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd in ("allow", "allow-only"):
@@ -1096,6 +1100,8 @@ class ServerPickerTUI:
                 self._add_output("Usage: allow <region>", "red")
                 return True, False
             success = self.allow_only_region(args[0])
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd == "block-region":
@@ -1103,6 +1109,8 @@ class ServerPickerTUI:
                 self._add_output("Usage: block-region <region>", "red")
                 return True, False
             success = self.block_region(args[0])
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd == "unblock-region":
@@ -1110,6 +1118,8 @@ class ServerPickerTUI:
                 self._add_output("Usage: unblock-region <region>", "red")
                 return True, False
             success = self.unblock_region(args[0])
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd == "ping":
@@ -1151,6 +1161,8 @@ class ServerPickerTUI:
         
         elif cmd == "reset":
             success = self.reset_all()
+            if success:
+                self.show_geo()  # Refresh list to show changes
             return True, success
         
         elif cmd in ("status", "s"):
