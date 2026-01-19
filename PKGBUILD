@@ -14,8 +14,7 @@ optdepends=(
     'fish: for fish shell completions'
 )
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-# TODO: Update checksum after publishing release
-sha256sums=('SKIP')
+sha256sums=('a3643bcab49f9dbdf0858f948389bbb0eacc8b29d48196fffea8234889c67bfe')
 
 build() {
     cd "${srcdir}/DeadlockServerPicker-linux-${pkgver}"
