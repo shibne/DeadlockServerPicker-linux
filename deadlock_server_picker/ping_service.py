@@ -242,7 +242,7 @@ def udp_ping(host: str, timeout: float = 2.0, port: int = 27015) -> Optional[flo
 class PingService:
     """Service for pinging Deadlock servers to measure latency."""
 
-    def __init__(self, timeout: float = 2.0, max_workers: int = 10):
+    def __init__(self, timeout: float = 2.0, max_workers: int = 50):
         """
         Initialize ping service.
         
@@ -264,14 +264,20 @@ class PingService:
         Returns:
             Latency in milliseconds, or None if ping failed.
         """
-        # Try each relay IP until one responds
+        # Try only the first IP address for speed
+        # (pinging all IPs sequentially is too slow when IPs timeout)
         best_latency = None
         
-        for ip in server.ip_addresses:
-            latency = ping_host(ip, self.timeout)
-            
+        ips = server.ip_addresses
+        if ips:
+            # Try first IP, then only try second if first fails
+            latency = ping_host(ips[0], self.timeout)
             if latency is not None:
-                if best_latency is None or latency < best_latency:
+                best_latency = latency
+            elif len(ips) > 1:
+                # Fallback to second IP if first fails
+                latency = ping_host(ips[1], self.timeout)
+                if latency is not None:
                     best_latency = latency
         
         if best_latency is not None:
@@ -285,31 +291,52 @@ class PingService:
                 
         return server.latency_ms
 
-    def ping_servers(self, servers: list[Server]) -> dict[str, Optional[int]]:
+    def ping_servers(self, servers: list[Server], on_progress: callable = None) -> dict[str, Optional[int]]:
         """
         Ping multiple servers concurrently.
         
         Args:
             servers: List of servers to ping.
+            on_progress: Optional callback(completed, total, server_code, latency) for progress updates.
             
         Returns:
             Dictionary mapping server codes to latencies.
         """
+        from concurrent.futures import as_completed, TimeoutError as FuturesTimeoutError
+        
         results = {}
         futures = {}
+        total = len(servers)
+        completed = 0
         
         for server in servers:
             future = self._executor.submit(self.ping_server, server)
             futures[future] = server
         
-        for future in futures:
-            server = futures[future]
-            try:
-                latency = future.result(timeout=self.timeout + 1)
-                results[server.code] = latency
-            except Exception:
-                results[server.code] = None
-                server.status = ServerStatus.TIMEOUT
+        # Use as_completed for real-time progress updates
+        # No timeout - let each future complete naturally
+        try:
+            for future in as_completed(futures):
+                server = futures[future]
+                try:
+                    latency = future.result(timeout=self.timeout + 1)
+                    results[server.code] = latency
+                except Exception:
+                    results[server.code] = None
+                    server.status = ServerStatus.TIMEOUT
+                
+                completed += 1
+                if on_progress:
+                    on_progress(completed, total, server.code, results[server.code])
+        except FuturesTimeoutError:
+            # Handle any remaining futures that timed out
+            for future, server in futures.items():
+                if server.code not in results:
+                    results[server.code] = None
+                    server.status = ServerStatus.TIMEOUT
+                    completed += 1
+                    if on_progress:
+                        on_progress(completed, total, server.code, None)
                 
         return results
 

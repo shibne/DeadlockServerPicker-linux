@@ -29,6 +29,8 @@ class Colors:
     WHITE = "\033[97m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
+    # Dim cyan for alternating colors
+    DIM_CYAN = "\033[2;96m"
 
 
 def supports_color() -> bool:
@@ -108,19 +110,19 @@ class DeadlockServerPickerCLI:
         
         print(colorize(header, Colors.BOLD))
         print("-" * len(header))
-
-        # Alternating row colors (pastel cyan and magenta)
-        alt_colors = [Colors.CYAN, Colors.MAGENTA]
         
-        # Rows
+        # Rows - blocked servers are dim, unblocked are normal cyan
         for i, server in enumerate(sorted(servers, key=lambda s: (s.status.value, s.latency_ms or 9999))):
             name = server.display_name[:max_name]
-            row_color = alt_colors[i % 2]
+            is_blocked = server.status == ServerStatus.BLOCKED
+            
+            # Color based on blocked status: dim for blocked, cyan for unblocked
+            row_color = Colors.DIM if is_blocked else Colors.CYAN
             
             # Status with color (override row color for status)
             status = server.status.value
-            if server.status == ServerStatus.BLOCKED:
-                status_str = colorize(f"{status:<12}", Colors.RED)
+            if is_blocked:
+                status_str = colorize(f"{status:<12}", Colors.RED + Colors.BOLD)
             elif server.status == ServerStatus.AVAILABLE:
                 status_str = colorize(f"{status:<12}", Colors.GREEN)
             elif server.status == ServerStatus.TIMEOUT:
@@ -364,8 +366,20 @@ class DeadlockServerPickerCLI:
             print(colorize("No servers to ping.", Colors.RED))
             return 1
 
-        print(colorize(f"Pinging {len(to_ping)} server(s)...", Colors.CYAN))
-        self.ping_service.ping_servers(to_ping)
+        total = len(to_ping)
+        print(colorize(f"Pinging {total} server(s)...", Colors.CYAN))
+        
+        # Progress callback
+        def on_progress(completed, total, code, latency):
+            bar_width = 30
+            filled = int(bar_width * completed / total)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            latency_str = f"{latency}ms" if latency else "timeout"
+            status = f"[{bar}] {completed}/{total} - {code}: {latency_str}"
+            print(f"\r{colorize(status, Colors.CYAN)}", end="", flush=True)
+        
+        self.ping_service.ping_servers(to_ping, on_progress=on_progress)
+        print()  # New line after progress bar
         
         self._print_server_table(to_ping, show_latency=True)
         return 0
@@ -622,8 +636,8 @@ class DeadlockServerPickerCLI:
         print(colorize("Available Region Presets:", Colors.BOLD))
         print("-" * 60)
         
-        # Alternating colors for rows (pastel cyan and magenta)
-        alt_colors = [Colors.CYAN, Colors.MAGENTA]
+        # Alternating colors for rows (cyan and dim cyan)
+        alt_colors = [Colors.CYAN, Colors.DIM_CYAN]
         row_idx = 0
         
         shown_regions = set()

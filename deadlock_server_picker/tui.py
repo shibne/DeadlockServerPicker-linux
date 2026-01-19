@@ -29,7 +29,6 @@ from .preset_manager import PresetManager
 from .regions import REGION_PRESETS, REGION_ALIASES, get_region_servers
 from .config import ConfigManager
 from .latency_history import LatencyHistoryManager
-from .wine_detect import check_deadlock_status
 from .geolocation import get_server_location, format_location_table
 
 
@@ -182,6 +181,9 @@ class ServerPickerTUI:
         
         if auto_applied:
             self._add_output(f"Auto-applied: {', '.join(auto_applied)}", "cyan")
+        
+        # Show server list on startup (same as list command)
+        self.show_geo()
     
     def _create_status_indicator(self, blocked: bool) -> Text:
         """Create a colored status indicator."""
@@ -222,9 +224,13 @@ class ServerPickerTUI:
             else:
                 ping_text = Text("-", style="dim")
             
+            # Bold text for blocked servers
+            code_style = "bold cyan" if blocked else "cyan"
+            name_style = "bold white" if blocked else "white"
+            
             table.add_row(
-                server.code,
-                server.name,
+                Text(server.code, style=code_style),
+                Text(server.name, style=name_style),
                 status,
                 ping_text,
                 str(len(server.relays)),
@@ -412,7 +418,6 @@ class ServerPickerTUI:
             ("ping [region]", "Ping servers and show latency"),
             ("history [server]", "Show latency history"),
             ("best", "Show servers with best latency"),
-            ("wine", "Show Wine/Proton status"),
             ("status", "Show current status"),
             ("reset", "Unblock all servers"),
             ("clear", "Clear output"),
@@ -421,7 +426,7 @@ class ServerPickerTUI:
         ]
         
         # Alternating colors (pastel cyan and magenta)
-        alt_colors = ["cyan", "magenta"]
+        alt_colors = ["cyan", "dim cyan"]
         for i, (cmd, desc) in enumerate(help_lines):
             row_color = alt_colors[i % 2]
             self._add_output(f"  {cmd:25} {desc}", row_color)
@@ -443,6 +448,12 @@ class ServerPickerTUI:
         if not filtered:
             self._add_output("No servers found", "yellow")
             return False
+        
+        # Sort by: blocked status first (unblocked=0, blocked=1), then by latency
+        filtered = sorted(filtered, key=lambda s: (
+            1 if self.server_status.get(s.code, False) else 0,
+            self.ping_results.get(s.code) or 9999
+        ))
         
         # Clear output and add server list in compact multi-column format
         self._clear_output()
@@ -468,26 +479,31 @@ class ServerPickerTUI:
                 entry = f"{status_icon} {server.code:6}      "
             entries.append((entry, blocked, i))
         
-        # Display in 4 columns with alternating colors per row
+        # Display in 4 columns - blocked servers are dim, unblocked are normal
         cols = 4
         col_width = 18
         rows = (len(entries) + cols - 1) // cols
-        alt_colors = ["cyan", "magenta"]
         
         for row in range(rows):
+            # Build line with individual styling per entry
             line_parts = []
             for col in range(cols):
                 idx = row + col * rows
                 if idx < len(entries):
                     entry, blocked, entry_idx = entries[idx]
-                    line_parts.append(f"{entry:<{col_width}}")
+                    line_parts.append((entry, blocked))
                 else:
-                    line_parts.append(" " * col_width)
+                    line_parts.append((" " * col_width, False))
             
-            # Alternating row colors
-            line = "  ".join(line_parts)
-            row_color = alt_colors[row % 2]
-            self._add_output(line, row_color)
+            # Create styled line with dim for blocked, cyan for unblocked
+            styled_line = Text()
+            for i, (entry, blocked) in enumerate(line_parts):
+                if i > 0:
+                    styled_line.append("  ", style="white")
+                style = "dim" if blocked else "cyan"
+                styled_line.append(f"{entry:<{col_width}}", style=style)
+            
+            self.output_lines.append(styled_line)
         
         self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
@@ -498,7 +514,7 @@ class ServerPickerTUI:
         self._add_output("─── Available Regions ───", "magenta")
         
         # Alternating colors (pastel cyan and magenta)
-        alt_colors = ["cyan", "magenta"]
+        alt_colors = ["cyan", "dim cyan"]
         row_idx = 0
         
         shown_regions = set()
@@ -664,7 +680,7 @@ class ServerPickerTUI:
         
         self._add_output("─── Custom Presets ───", "cyan")
         
-        alt_colors = ["cyan", "magenta"]
+        alt_colors = ["cyan", "dim cyan"]
         for i, preset in enumerate(presets):
             row_color = alt_colors[i % 2]
             server_list = ", ".join(preset.servers[:5])
@@ -880,40 +896,6 @@ class ServerPickerTUI:
         self._add_output("● = blocked, ○ = allowed", "dim")
         return True
     
-    def show_wine_status(self) -> bool:
-        """Show Wine/Proton detection status. Returns True."""
-        self._clear_output()
-        self._add_output("─── Wine/Proton Status ───", "cyan")
-        
-        status = check_deadlock_status()
-        
-        # Components
-        self._add_output("", "white")
-        self._add_output("Installed Components:", "white")
-        for comp, installed in status['components'].items():
-            icon = "✓" if installed else "✗"
-            style = "green" if installed else "red"
-            self._add_output(f"  {icon} {comp}", style)
-        
-        # Running processes
-        self._add_output("", "white")
-        if status['deadlock_running']:
-            self._add_output(f"Deadlock Running: Yes ({len(status['processes'])} process(es))", "green")
-            for proc in status['processes']:
-                self._add_output(f"  • {proc.description}", "cyan")
-        else:
-            self._add_output("Deadlock Running: No", "yellow")
-        
-        # Firewall note
-        self._add_output("", "white")
-        self._add_output("Firewall Note:", "white")
-        if status['proton_installed'] or status['wine_installed']:
-            self._add_output("  FORWARD chain is enabled for Wine/Proton compatibility", "green")
-        else:
-            self._add_output("  Wine/Proton not detected - using OUTPUT chain only", "dim")
-        
-        return True
-    
     def show_geo(self, filter_arg: Optional[str] = None) -> bool:
         """Show server geographic locations. Returns True."""
         self._clear_output()
@@ -979,35 +961,44 @@ class ServerPickerTUI:
                 regions["Unknown"].append((server.code, display, blocked, ping))
         
         # Display each region in compact multi-column format
-        alt_colors = ["cyan", "magenta"]
         for region in sorted(regions.keys()):
             self._add_output(f"{region}:", "yellow")
             
-            # Build entries for this region
+            # Build entries for this region - store code and city separately for styling
             entries = []
             for code, city, blocked, ping in sorted(regions[region], key=lambda x: x[1]):
                 icon = "●" if blocked else "○"
                 if ping is not None and isinstance(ping, (int, float)):
-                    entry = f"{icon} {code:6} {city[:12]:12} {ping:>4.0f}ms"
+                    ping_str = f"{ping:>4.0f}ms"
                 else:
-                    entry = f"{icon} {code:6} {city[:12]:12}      "
-                entries.append((entry, blocked))
+                    ping_str = "      "
+                entries.append((icon, code, city[:12], ping_str, blocked))
             
-            # Display in 3 columns with alternating colors
+            # Display in 3 columns - blocked servers are dim, unblocked are cyan
+            # Server code gets a distinct color (white/bold for unblocked, dim for blocked)
             cols = 3
             col_width = 28
             rows = (len(entries) + cols - 1) // cols
             
             for row in range(rows):
-                line_parts = []
+                styled_line = Text()
+                styled_line.append("  ", style="white")  # Indent
                 for col in range(cols):
                     idx = row + col * rows
                     if idx < len(entries):
-                        line_parts.append(entries[idx][0])
+                        icon, code, city, ping_str, blocked = entries[idx]
+                        if col > 0:
+                            styled_line.append("  ", style="white")
+                        # Dim for blocked, cyan for unblocked
+                        base_style = "dim" if blocked else "cyan"
+                        # Server code gets distinct style: bright blue for unblocked, dim for blocked
+                        code_style = "dim" if blocked else "bright_blue"
+                        
+                        styled_line.append(f"{icon} ", style=base_style)
+                        styled_line.append(f"{code:6} ", style=code_style)
+                        styled_line.append(f"{city:12} {ping_str}", style=base_style)
                 
-                line = "  ".join(f"{p:<{col_width}}" for p in line_parts)
-                row_color = alt_colors[row % 2]
-                self._add_output(f"  {line}", row_color)
+                self.output_lines.append(styled_line)
         
         self._add_output(f"─── ● = blocked, ○ = allowed ───", "dim")
         return True
@@ -1135,10 +1126,6 @@ class ServerPickerTUI:
             success = self.show_best_servers()
             return True, success
         
-        elif cmd == "wine":
-            success = self.show_wine_status()
-            return True, success
-        
         elif cmd == "preset":
             if not args:
                 success = self.preset_list()
@@ -1210,9 +1197,6 @@ class ServerPickerTUI:
         running = True
         while running:
             try:
-                # Reset interrupt count on successful command
-                interrupt_count = 0
-                
                 # Update terminal title with status
                 blocked = sum(1 for s in self.servers if self.server_status.get(s.code, False))
                 self._set_terminal_title(f"Deadlock Server Picker - {blocked} blocked")
@@ -1229,6 +1213,8 @@ class ServerPickerTUI:
                 
                 # Get command input
                 command = self.console.input("[bold cyan]>>> [/]")
+                # Reset interrupt count only after successful command entry
+                interrupt_count = 0
                 running, _ = self.handle_command(command)
             except KeyboardInterrupt:
                 interrupt_count += 1
